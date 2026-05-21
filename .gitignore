@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+.vercel/
+*.tsbuildinfo
+
+# Env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Data / Artifacts
+data/
+*.db
+*.db-journal
+
+# Eval per-run sidecars (large, session-specific; reference uncommitted screenshots).
+# The committed eval/report.json baselines stay; the per-job JSON does not.
+task1_browser_agent/eval/jobs/
+task2_10k_extractor/eval/jobs/
+task1_browser_agent/eval/labels.json
+task1_browser_agent/eval/platt_params.json
+task2_10k_extractor/eval/labels.json
+task2_10k_extractor/eval/platt_params.json
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+logs/
