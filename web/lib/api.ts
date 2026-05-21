@@ -1,0 +1,341 @@
+export const API_BASE =
+  (typeof window !== "undefined" && (window as { __API_BASE__?: string }).__API_BASE__) ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "http://localhost:8000";
+
+export type AgentState =
+  | "PLAN" | "LOCATE" | "ACT" | "VERIFY" | "DIAGNOSE" | "DONE" | "ESCALATE";
+
+export type JobStatus =
+  | "pending" | "running" | "succeeded" | "failed" | "escalated" | "quarantined";
+
+export interface StepEvent {
+  job_id: string;
+  sequence: number;
+  state: AgentState;
+  step_index: number | null;
+  message: string;
+  detail: Record<string, unknown> | null;
+  timestamp: string;
+}
+
+export interface JobView {
+  job_id: string;
+  task_description: string;
+  target_url: string | null;
+  status: JobStatus;
+  final_output: Record<string, unknown> | null;
+  // `plan` and `steps` are typed loosely here because /task1 page only reads
+  // the count; the inspector page narrows them via its own interfaces.
+  plan: PlannedStep[];
+  steps: StepResult[];
+  recovery_attempts: number;
+  total_cost_usd: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function createJob(taskDescription: string): Promise<JobView> {
+  const res = await fetch(`${API_BASE}/task1/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_description: taskDescription }),
+  });
+  if (!res.ok) throw new Error(`createJob failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getJob(jobId: string): Promise<JobView> {
+  const res = await fetch(`${API_BASE}/task1/jobs/${jobId}`);
+  if (!res.ok) throw new Error(`getJob failed: ${res.status}`);
+  return res.json();
+}
+
+export function subscribeEvents(
+  jobId: string,
+  onStep: (e: StepEvent) => void,
+  onDone: (j: JobView) => void,
+): () => void {
+  const es = new EventSource(`${API_BASE}/task1/jobs/${jobId}/events`);
+  es.addEventListener("step", (ev) => {
+    try { onStep(JSON.parse((ev as MessageEvent).data)); } catch (e) { console.error(e); }
+  });
+  es.addEventListener("done", (ev) => {
+    try { onDone(JSON.parse((ev as MessageEvent).data)); } catch (e) { console.error(e); }
+    es.close();
+  });
+  es.onerror = () => es.close();
+  return () => es.close();
+}
+
+// -----------------------------------------------------------------------------
+// Dashboard
+// -----------------------------------------------------------------------------
+
+export interface EvalCase {
+  id: string;
+  category: string;
+  passed: boolean;
+  status: string;
+  cost_usd: number;
+  duration_ms: number;
+  recovery_attempts: number;
+  failure_reason: string | null;
+  job_id: string | null;  // link to /jobs/{job_id}
+}
+
+export interface EvalReport {
+  available: boolean;
+  reason?: string;
+  generated_at?: string;
+  metrics?: {
+    n_cases: number;
+    n_pass: number;
+    n_infra_error: number;
+    pass_rate: number;
+    pass_rate_ex_infra: number;
+    cost_p50: number;
+    cost_p95: number;
+    duration_p50_ms: number;
+    duration_p95_ms: number;
+    recovery_rate: number;
+    by_category: Record<string, { n: number; pass_rate: number; mean_cost_usd: number }>;
+  };
+  cases?: EvalCase[];
+}
+
+export interface CostByPurpose {
+  purpose: string;
+  calls: number;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface CostByModel {
+  model: string;
+  backend: string;
+  calls: number;
+  cost_usd: number;
+}
+
+export interface CostSummary {
+  total_cost_usd: number;
+  total_calls: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  cache_hit_count: number;
+  cache_hit_rate: number;
+  by_purpose: CostByPurpose[];
+  by_model: CostByModel[];
+}
+
+export interface RecentJob {
+  job_id: string;
+  task_description: string;
+  status: string;
+  n_steps: number;
+  recovery_attempts: number;
+  total_cost_usd: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CapabilitySite {
+  domain?: string;
+  pattern?: string;
+  operations?: string[];
+  reason?: string;
+  notes?: string;
+}
+
+export interface Capabilities {
+  supported_sites: CapabilitySite[];
+  unsupported_or_unreliable: CapabilitySite[];
+  allow_list: string[];
+}
+
+export async function getEvalReport(): Promise<EvalReport> {
+  const res = await fetch(`${API_BASE}/task1/dashboard/eval`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`getEvalReport failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getCostSummary(): Promise<CostSummary> {
+  const res = await fetch(`${API_BASE}/task1/dashboard/cost-summary`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`getCostSummary failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getRecentJobs(limit = 10): Promise<RecentJob[]> {
+  const res = await fetch(`${API_BASE}/task1/dashboard/recent-jobs?limit=${limit}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`getRecentJobs failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getCapabilities(): Promise<Capabilities> {
+  const res = await fetch(`${API_BASE}/task1/capabilities`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`getCapabilities failed: ${res.status}`);
+  return res.json();
+}
+
+// -----------------------------------------------------------------------------
+// Task 2 — 10-K extractor
+// -----------------------------------------------------------------------------
+
+export interface FilingMeta {
+  cik: string | null;
+  accession_number: string | null;
+  fiscal_year: number | null;
+  form_type: string;
+  company_name: string | null;
+  source_url: string;
+  fetched_at: string;
+}
+
+export interface ExtractedItem {
+  item_id: string;
+  title: string;
+  content: string;
+  start_offset: number;
+  end_offset: number;
+  char_length: number;
+  confidence: number;
+  extraction_method: "L1" | "L2" | "L3";
+  notes: string | null;
+}
+
+export interface FilingExtraction {
+  job_id: string;
+  filing: FilingMeta;
+  items: ExtractedItem[];
+  overall_confidence: number;
+  quarantined: boolean;
+  quarantine_reasons: string[];
+  extraction_method_summary: Record<string, number>;
+  n_expected_items: number;
+  n_found_items: number;
+  coverage_ratio: number;
+  cost_usd: number;
+  duration_ms: number;
+  created_at: string;
+}
+
+export interface Task2Job {
+  job_id: string;
+  source_url: string;
+  status: JobStatus;
+  extraction: FilingExtraction | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function createExtraction(sourceUrl: string): Promise<Task2Job> {
+  const res = await fetch(`${API_BASE}/task2/extractions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_url: sourceUrl }),
+  });
+  if (!res.ok) throw new Error(`createExtraction failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getExtraction(jobId: string): Promise<Task2Job> {
+  const res = await fetch(`${API_BASE}/task2/extractions/${jobId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`getExtraction failed: ${res.status}`);
+  return res.json();
+}
+
+// -----------------------------------------------------------------------------
+// Failure inspector — full job lookup with eval metadata
+// -----------------------------------------------------------------------------
+
+export interface JobInspectorPayload {
+  job: JobView & { steps: StepResult[]; plan: PlannedStep[] };
+  source: "memory" | "eval_sidecar";
+  eval_metadata?: {
+    case_id: string;
+    passed: boolean;
+    failure_reason: string | null;
+    assertions: Record<string, unknown>;
+    fault_inject: Record<string, unknown> | null;
+    fault_status: Record<string, unknown> | null;
+  };
+}
+
+export interface PlannedStep {
+  index: number;
+  action: string;
+  target_description: string;
+  value: string | null;
+  success_criteria: string;
+  locator: Record<string, unknown> | null;
+}
+
+export interface ArtifactRef {
+  key: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface StepResult {
+  step_index: number;
+  state: AgentState;
+  success: boolean;
+  failure_kind: string | null;
+  error_message: string | null;
+  dom_snapshot_ref: ArtifactRef | null;
+  screenshot_ref: ArtifactRef | null;
+  duration_ms: number;
+  cost_usd: number;
+  started_at: string;
+  ended_at: string;
+}
+
+export async function getJobInspector(jobId: string): Promise<JobInspectorPayload> {
+  const res = await fetch(`${API_BASE}/task1/jobs/${jobId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`getJobInspector failed: ${res.status}`);
+  return res.json();
+}
+
+export async function getJobIdForCase(caseId: string): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/task1/jobs/by-case/${caseId}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`getJobIdForCase failed: ${res.status}`);
+  const data = await res.json();
+  return data.job_id;
+}
+
+export function artifactUrl(key: string): string {
+  // Key format: "{job_id}/{filename}" — preserve exactly one slash.
+  const slash = key.indexOf("/");
+  if (slash < 0) throw new Error(`bad artifact key: ${key}`);
+  const jobId = key.slice(0, slash);
+  const filename = key.slice(slash + 1);
+  return `${API_BASE}/task1/artifacts/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`;
+}
+
+export async function pollExtraction(
+  jobId: string,
+  onUpdate: (j: Task2Job) => void,
+  intervalMs = 1000,
+): Promise<() => void> {
+  let stopped = false;
+  const tick = async () => {
+    if (stopped) return;
+    try {
+      const j = await getExtraction(jobId);
+      onUpdate(j);
+      if (j.status === "succeeded" || j.status === "failed" || j.status === "quarantined") {
+        return;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    if (!stopped) setTimeout(tick, intervalMs);
+  };
+  tick();
+  return () => { stopped = true; };
+}
