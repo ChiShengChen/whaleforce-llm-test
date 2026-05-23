@@ -53,13 +53,19 @@ class PlattParams:
     fit_at: str
 
     def transform(self, raw_score: float) -> float:
+        """Standard Platt: P(correct) = 1 / (1 + exp(a*x + b)).
+
+        With `a < 0`, P increases with raw_score (the common case — higher
+        raw confidence is more likely correct). With `a > 0`, P decreases.
+        Sign of `a` is determined by the training data; we don't enforce it.
+        """
         z = self.a * raw_score + self.b
-        # numerically stable sigmoid
+        # Numerically stable: never compute exp() of a large positive number.
         if z >= 0:
             ez = math.exp(-z)
-            return 1.0 / (1.0 + ez)
+            return ez / (1.0 + ez)
         ez = math.exp(z)
-        return ez / (1.0 + ez)
+        return 1.0 / (1.0 + ez)
 
 
 def load_params() -> PlattParams | None:

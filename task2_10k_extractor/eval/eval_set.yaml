@@ -286,3 +286,57 @@ cases:
     max_quarantined: false
     max_cost_usd: 0.1
     max_duration_ms: 30000
+- id: aapl-2015
+  industry: tech
+  company: AAPL
+  fiscal_year: 2015
+  url: https://www.sec.gov/Archives/edgar/data/320193/000119312515356351/d17062d10k.htm
+  filed_date: '2015-10-28'
+  note: Pre-iXBRL era; tests L1 on plain HTML 10-K
+  assertions:
+    min_items_found: 14
+    required_item_ids:
+    - '1'
+    - 1A
+    - '7'
+    - '8'
+    min_overall_confidence: 0.5
+    max_quarantined: false
+    max_cost_usd: 0.1
+    max_duration_ms: 30000
+- id: msft-2015
+  industry: tech
+  company: MSFT
+  fiscal_year: 2015
+  url: https://www.sec.gov/Archives/edgar/data/789019/000119312515272806/d918813d10k.htm
+  filed_date: '2015-07-31'
+  note: Pre-iXBRL era; same filer different year tests temporal stability
+  assertions:
+    min_items_found: 14
+    required_item_ids:
+    - '1'
+    - 1A
+    - '7'
+    - '8'
+    min_overall_confidence: 0.5
+    max_quarantined: false
+    max_cost_usd: 0.1
+    max_duration_ms: 30000
+- id: jpm-2015
+  industry: bank
+  company: JPM
+  fiscal_year: 2015
+  url: https://www.sec.gov/Archives/edgar/data/19617/000001961716000902/corp10k2015.htm
+  filed_date: '2016-02-23'
+  note: Pre-iXBRL bank filing; mostly references-by-reference for 10-14
+  assertions:
+    min_items_found: 14
+    required_item_ids:
+    - '1'
+    - 1A
+    - '7'
+    - '8'
+    min_overall_confidence: 0.4
+    max_quarantined: false
+    max_cost_usd: 0.1
+    max_duration_ms: 30000

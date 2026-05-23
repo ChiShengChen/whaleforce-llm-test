@@ -52,6 +52,29 @@ class CostRow(Base):
     occurred_at = Column(DateTime, nullable=False, index=True)
 
 
+class SelectorHistoryRow(Base):
+    """Tracks which locators have worked for each (site, target_description)
+    pair so that future runs can prefer known-good selectors.
+
+    Designed in PLAN.md §2.3 as the basis for selector-drift detection:
+    persistent record of (success_count, failure_count) per primary selector
+    lets us spot rising failure rates per site and trigger a "needs review"
+    alert before the agent's first-try success rate degrades.
+    """
+
+    __tablename__ = "selector_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    site_host = Column(String(255), index=True, nullable=False)
+    target_signature = Column(String(255), index=True, nullable=False)
+    primary_selector = Column(String(1024), nullable=False)
+    semantic_role = Column(String(64), nullable=True)
+    semantic_name = Column(String(255), nullable=True)
+    success_count = Column(Integer, nullable=False, default=1)
+    failure_count = Column(Integer, nullable=False, default=0)
+    last_used_at = Column(DateTime, nullable=False, index=True)
+
+
 _engine = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
@@ -128,6 +151,114 @@ async def cost_since(since: datetime) -> float:
             )
         )
         return float(result.scalar_one())
+
+
+async def record_selector_success(
+    *,
+    site_host: str,
+    target_signature: str,
+    primary_selector: str | None,
+    semantic_role: str | None,
+    semantic_name: str | None,
+) -> None:
+    """Bump success_count if the (site, signature, selector) exists; insert otherwise.
+
+    `target_signature` is a normalized form of the NL target_description so
+    "the search input" and "Search input" match the same row.
+    """
+    if not primary_selector and not semantic_role:
+        return  # nothing identifying to record
+    from sqlalchemy import select, update
+
+    now = datetime.now(timezone.utc)
+    async with session_scope() as session:
+        stmt = select(SelectorHistoryRow).where(
+            SelectorHistoryRow.site_host == site_host,
+            SelectorHistoryRow.target_signature == target_signature,
+            SelectorHistoryRow.primary_selector == (primary_selector or ""),
+        )
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        if existing:
+            await session.execute(
+                update(SelectorHistoryRow)
+                .where(SelectorHistoryRow.id == existing.id)
+                .values(
+                    success_count=SelectorHistoryRow.success_count + 1,
+                    last_used_at=now,
+                )
+            )
+        else:
+            session.add(
+                SelectorHistoryRow(
+                    site_host=site_host,
+                    target_signature=target_signature,
+                    primary_selector=primary_selector or "",
+                    semantic_role=semantic_role,
+                    semantic_name=semantic_name,
+                    success_count=1,
+                    failure_count=0,
+                    last_used_at=now,
+                )
+            )
+
+
+async def record_selector_failure(
+    *,
+    site_host: str,
+    target_signature: str,
+    primary_selector: str | None,
+) -> None:
+    from sqlalchemy import select, update
+
+    if not primary_selector:
+        return
+    async with session_scope() as session:
+        stmt = select(SelectorHistoryRow).where(
+            SelectorHistoryRow.site_host == site_host,
+            SelectorHistoryRow.target_signature == target_signature,
+            SelectorHistoryRow.primary_selector == primary_selector,
+        )
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+        if existing:
+            await session.execute(
+                update(SelectorHistoryRow)
+                .where(SelectorHistoryRow.id == existing.id)
+                .values(failure_count=SelectorHistoryRow.failure_count + 1)
+            )
+
+
+async def get_known_good_selectors(
+    *, site_host: str, target_signature: str, limit: int = 3
+) -> list[dict]:
+    """Return up to N (selector, success_count, failure_count) for this
+    (site, target) pair, ranked by success_count - failure_count.
+    """
+    from sqlalchemy import select
+
+    async with session_scope() as session:
+        rows = (
+            await session.execute(
+                select(SelectorHistoryRow)
+                .where(
+                    SelectorHistoryRow.site_host == site_host,
+                    SelectorHistoryRow.target_signature == target_signature,
+                )
+                .order_by(
+                    (SelectorHistoryRow.success_count - SelectorHistoryRow.failure_count).desc()
+                )
+                .limit(limit)
+            )
+        ).scalars().all()
+    return [
+        {
+            "primary": r.primary_selector,
+            "semantic_role": r.semantic_role,
+            "semantic_name": r.semantic_name,
+            "success_count": r.success_count,
+            "failure_count": r.failure_count,
+        }
+        for r in rows
+    ]
 
 
 async def cost_summary() -> dict:

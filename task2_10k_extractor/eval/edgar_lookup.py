@@ -74,6 +74,46 @@ async def fetch_submissions(cik: int) -> dict:
         return resp.json()
 
 
+async def fetch_all_historical(cik: int) -> dict:
+    """Fetch submissions PLUS all paginated historical files.
+
+    EDGAR's `filings.recent` block only contains the last ~1000 filings;
+    older history lives under `filings.files[].name`. For 10-Ks specifically
+    (one per year), large-cap filers' history typically extends back 20+
+    years.
+
+    Returns a single dict with `recent` lists *concatenated* with all
+    historical pages. Same field layout as the original recent block.
+    """
+    padded = f"CIK{cik:010d}"
+    main = await fetch_submissions(cik)
+    files = main.get("filings", {}).get("files", []) or []
+    combined = dict(main["filings"]["recent"])  # shallow copy of lists
+    keys = list(combined.keys())
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for f in files:
+            name = f.get("name")
+            if not name:
+                continue
+            url = f"https://data.sec.gov/submissions/{name}"
+            try:
+                resp = await client.get(
+                    url, headers={"User-Agent": SEC_UA, "Accept": "application/json"}
+                )
+                resp.raise_for_status()
+                page = resp.json()
+            except Exception:
+                continue
+            for k in keys:
+                page_list = page.get(k, [])
+                if isinstance(page_list, list):
+                    combined[k] = list(combined[k]) + list(page_list)
+    out = dict(main)
+    out.setdefault("filings", {})
+    out["filings"]["recent"] = combined
+    return out
+
+
 def _pick_10k_filing(
     submissions: dict, *, fiscal_year: int | None
 ) -> tuple[str, str, str, int] | None:
@@ -125,6 +165,12 @@ async def resolve_filing(
         raise KeyError(f"unknown ticker {ticker!r} — add to KNOWN_CIKS")
     submissions = await fetch_submissions(int(meta["cik"]))
     picked = _pick_10k_filing(submissions, fiscal_year=fiscal_year)
+    if picked is None and fiscal_year is not None:
+        # Specific year requested but missing from `recent` — fall through
+        # to paginated historical files. Costs an extra fetch per file, ~5
+        # files for a 20-year-old filer.
+        submissions = await fetch_all_historical(int(meta["cik"]))
+        picked = _pick_10k_filing(submissions, fiscal_year=fiscal_year)
     if picked is None:
         return None
     accession, primary, filed, fy = picked

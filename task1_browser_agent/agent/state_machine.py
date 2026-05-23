@@ -44,6 +44,21 @@ from task1_browser_agent.agent.verifier import verify
 logger = get_logger(__name__)
 
 
+def _signature(target_description: str) -> str:
+    """Normalize an NL target description for selector_history lookup.
+
+    Two descriptions with the same intent should hit the same row even if
+    capitalization or filler words differ. We lower-case + collapse
+    whitespace + drop the most common filler words.
+    """
+    import re
+
+    s = (target_description or "").lower()
+    s = re.sub(r"\b(the|a|an|of|on|at|in|to)\b", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:200]  # cap for DB column width
+
+
 class AgentRunner:
     """One agent run = one job. Yields events for SSE; mutates the Task1Job in place."""
 
@@ -183,6 +198,15 @@ class AgentRunner:
                     step_index=step.index,
                 )
                 snap = await ex.snapshot(step_index=step.index)
+                # Pull known-good selectors from selector_history for this
+                # (site, target) — first-try hit rate compounds over time.
+                from shared.cost_ledger import get_known_good_selectors
+                from urllib.parse import urlparse
+                site_host = (urlparse(snap.url).hostname or "").lower()
+                target_sig = _signature(step.target_description)
+                known_good = await get_known_good_selectors(
+                    site_host=site_host, target_signature=target_sig
+                )
                 step.locator = await resolve_locator(
                     trace_id=self.job.job_id,
                     target_description=step.target_description,
@@ -192,7 +216,12 @@ class AgentRunner:
                     prefer_semantic=prefer_semantic,
                     prefer_visual=prefer_visual,
                     avoid_selectors=failed_primary_selectors,
+                    known_good=known_good,
                 )
+                # Stash the site_host + signature for later success/failure
+                # writes — we don't want to re-snapshot the page in DIAGNOSE.
+                self._last_site_host = site_host
+                self._last_target_sig = target_sig
 
                 # Eval-only: deterministically corrupt the locator so the
                 # recovery loop must engage. No-op in production (no fault
@@ -275,6 +304,19 @@ class AgentRunner:
             if success:
                 if output.get("extracted_text"):
                     self._final_output[f"step_{step.index}"] = output["extracted_text"]
+                # selector_history write: bump success_count for the locator
+                # that worked. This compounds over time → future runs prefer
+                # this selector and skip the locator-LLM call when it still
+                # matches the DOM.
+                if step.locator and (step.locator.primary or step.locator.semantic_role):
+                    from shared.cost_ledger import record_selector_success
+                    await record_selector_success(
+                        site_host=getattr(self, "_last_site_host", ""),
+                        target_signature=getattr(self, "_last_target_sig", ""),
+                        primary_selector=step.locator.primary,
+                        semantic_role=step.locator.semantic_role,
+                        semantic_name=step.locator.semantic_name,
+                    )
                 yield self._event(
                     AgentState.VERIFY,
                     "Step passed",
@@ -328,6 +370,16 @@ class AgentRunner:
                 # is told not to re-propose it.
                 if step.locator and step.locator.primary:
                     failed_primary_selectors.append(step.locator.primary)
+                    # Persist failure to selector_history — drift detection
+                    # signal: failure_count climbing on a selector that used
+                    # to work tells us the site changed.
+                    if failure_kind == FailureKind.STALE_SELECTOR:
+                        from shared.cost_ledger import record_selector_failure
+                        await record_selector_failure(
+                            site_host=getattr(self, "_last_site_host", ""),
+                            target_signature=getattr(self, "_last_target_sig", ""),
+                            primary_selector=step.locator.primary,
+                        )
                 # Escalate the locator prong on each successive retry:
                 #   attempt 1 fail → prefer_semantic
                 #   attempt 2 fail → prefer_visual (give up on primary AND semantic)

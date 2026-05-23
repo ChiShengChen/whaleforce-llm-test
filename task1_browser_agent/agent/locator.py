@@ -26,6 +26,7 @@ async def resolve_locator(
     prefer_semantic: bool = False,
     prefer_visual: bool = False,
     avoid_selectors: list[str] | None = None,
+    known_good: list[dict] | None = None,
 ) -> Locator:
     system, user_template = split("locator")
     user = render(
@@ -35,6 +36,23 @@ async def resolve_locator(
         a11y_tree=a11y_tree[:3000],
     )
     hints: list[str] = []
+    # selector_history hint: if we've seen this (site, target) pair succeed
+    # before, surface the working selector(s) so the LLM can adopt them
+    # rather than reinventing. Net-positive selectors only.
+    if known_good:
+        positives = [g for g in known_good if g["success_count"] > g["failure_count"]]
+        if positives:
+            lines = []
+            for g in positives[:3]:
+                lines.append(
+                    f"  primary={g['primary']!r} "
+                    f"(seen working {g['success_count']}× / failing {g['failure_count']}×)"
+                )
+            hints.append(
+                "KNOWN-GOOD selectors from prior successful runs for this "
+                "(site, target) — prefer one of these if it still matches:\n"
+                + "\n".join(lines)
+            )
     if prefer_visual:
         hints.append(
             "Two prior attempts already failed on CSS and ARIA prongs. "

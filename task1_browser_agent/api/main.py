@@ -27,6 +27,7 @@ from sse_starlette.sse import EventSourceResponse
 from shared.config import get_settings
 from shared.cost_ledger import cost_summary, init_db
 from shared.logging import configure_logging, get_logger
+from shared.otel import setup_otel
 from shared.schemas import Task1Job
 
 from task1_browser_agent.agent.state_machine import AgentRunner
@@ -52,7 +53,8 @@ app.include_router(task2_router)
 @app.on_event("startup")
 async def on_startup() -> None:
     await init_db()
-    logger.info("api_startup", backend=settings.llm_backend)
+    otel_active = setup_otel(app)
+    logger.info("api_startup", backend=settings.llm_backend, otel=otel_active)
 
 
 class CreateJobBody(BaseModel):

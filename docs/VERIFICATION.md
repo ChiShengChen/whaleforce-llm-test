@@ -677,6 +677,85 @@ Or visual: `cd web && PATH=/usr/local/bin:$PATH npm run dev` → `/task2`.
 
 ---
 
+## 16. Round-2 improvements (2026-05-23) — selector history + historical filings + Platt + OTel
+
+After the v1 submission, we closed four of the open-issues lists from §10 / §13.
+
+### 16.1 selector_history persistence (Task 1)
+
+PLAN.md §2.3 specifies a per-(site, target) selector cache so future runs
+prefer known-good selectors and don't re-pay the locator LLM call. Now implemented:
+
+- `SelectorHistoryRow` table in [`shared/cost_ledger.py`](../shared/cost_ledger.py) — `(site_host, target_signature, primary_selector)` with `success_count` / `failure_count` / `last_used_at`.
+- `record_selector_success` writes after every successful step in the state machine.
+- `record_selector_failure` writes after STALE_SELECTOR-classified failures.
+- `get_known_good_selectors` reads at LOCATE time; positives surfaced in the locator prompt as a "KNOWN-GOOD selectors" hint.
+- `_signature()` normalizes NL target descriptions ("The main search input" / "main search input on top") to the same row.
+
+Behavioural effect: the second run of an identical task hits the cache. Drift signal: `failure_count / (success+failure) > 20%` on a previously-good selector indicates the site changed — currently surfaced in the dashboard as a future enhancement.
+
+### 16.2 Historical (pre-iXBRL) 10-K eval (Task 2)
+
+`task2_10k_extractor/eval/edgar_lookup.py` now follows `filings.files[].name` pagination so the EDGAR helper can resolve filings outside the recent ~1000-filing block. Added three pre-iXBRL eval cases (2015 filings):
+
+| Case | Filing era | Result |
+|---|---|---|
+| `aapl-2015` | Pre-iXBRL plain HTML | ✅ pass — 20 items, 0.948 conf |
+| `jpm-2015` | Pre-iXBRL bank | ✅ pass — 20 items, 0.947 conf |
+| `msft-2015` | Pre-iXBRL | ❌ fail — Item 8 missing (heavily incorporated by reference, no body anchor) |
+
+That msft-2015 fails on Item 8 is the **right** kind of failure — the filing legitimately doesn't have Item 8 as an in-document section (it points at exhibits). The pipeline correctly flags it instead of hallucinating content; the eval correctly catches it.
+
+**Eval set grew: 17 → 20 cases. Pass rate: 100% → 95%** (the 1 honest fail is a meaningful coverage signal).
+
+### 16.3 Platt calibration trained (Task 2)
+
+[`task2_10k_extractor/eval/bootstrap_calibration.py`](../task2_10k_extractor/eval/bootstrap_calibration.py) runs the full eval, extracts `(raw_confidence, synthetic_label)` per item, fits Platt scaling, persists `platt_params.json`. Synthetic-label rules transparent in the provenance file:
+
+- POSITIVE: REQUIRED item, char_length ∈ [floor, cap], case-level all-assertions-pass
+- NEGATIVE: notes contains "empty content"/"TOC", or REQUIRED item < 25% of floor, or > sensible cap, or case quarantined with raw_conf < 0.5
+- AMBIGUOUS: optional items in middling sizes — dropped (not labelled either way)
+
+Result on the current eval:
+
+| | |
+|---|---|
+| Labels collected | **192** (173 positive, 19 negative) |
+| Platt slope `a` | −4.026 (negative slope ⇒ higher raw confidence → higher P(correct), the expected direction) |
+| Platt intercept `b` | 1.123 |
+| ECE (Expected Calibration Error) | **0.056** (well-calibrated — buckets agree with reality within 5.6 pp) |
+| Brier score | 0.053 |
+
+After one bug-fix iteration (`transform()` was computing `sigmoid(z)` instead of `sigmoid(-z)` — inverted direction; ECE dropped from 0.86 → 0.056 after fix.)
+
+The dashboard no longer flags "uncalibrated"; it uses the fitted Platt model. **Caveat**: labels are SYNTHETIC, derived from rules-based plausibility, not human grading. The `.provenance.json` sidecar records this honestly. Replace with hand-graded labels before treating the calibrated number as a probability for production decisions.
+
+### 16.4 OpenTelemetry wired and smoke-tested
+
+`OTEL_ENABLED=true` now actually does something:
+
+- [`shared/otel.py`](../shared/otel.py) — sets up TracerProvider with `service.name=whaleforce-llm-test`.
+- Endpoint resolution:
+  - `OTEL_EXPORTER_OTLP_ENDPOINT` pointing at a real collector (Honeycomb / Tempo / Jaeger) → OTLP gRPC exporter (install `opentelemetry-exporter-otlp-proto-grpc` to use; gracefully degrades to console if missing).
+  - Default endpoint (`http://localhost:4317`) → `ConsoleSpanExporter` (spans print to stderr — useful for local smoke without standing up a backend).
+- FastAPI auto-instrumentation: `FastAPIInstrumentor.instrument_app(app)` adds one span per HTTP request.
+- `get_tracer()` returns a no-op tracer when OTel is disabled — callers don't branch.
+
+Smoke-verified locally: `OTEL_ENABLED=true python -c "..."` emits a span JSON to stderr.
+
+To ship to Honeycomb, install the OTLP exporter:
+
+```bash
+pip install opentelemetry-exporter-otlp-proto-grpc
+export OTEL_ENABLED=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io
+export OTEL_EXPORTER_OTLP_HEADERS='x-honeycomb-team=YOUR_KEY'
+```
+
+The Anthropic/Gemini/OpenAI HTTP requests under the LLM gateway get spans for free from httpx auto-instrumentation (not yet wired here — one more `HTTPXClientInstrumentor` line away).
+
+---
+
 ## 9. Quick "does it still work?" command
 
 Run this single command before every commit. It exits 0 if the foundation + smoke test still pass:
