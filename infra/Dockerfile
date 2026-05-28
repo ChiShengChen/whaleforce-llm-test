@@ -2,10 +2,12 @@
 # Used by Railway / Fly / Render / Zeabur — anywhere that supports a long-running
 # container. Vercel cannot run this (it has no Playwright runtime).
 
-# `-noble` ships Ubuntu 24.04 with Python 3.12 (our pyproject requires >=3.11).
-# `-jammy` ships Ubuntu 22.04 with Python 3.10 — too old; install fails with
-# "Package 'whaleforce-llm-test' requires a different Python: 3.10.12 not in '>=3.11'".
-FROM mcr.microsoft.com/playwright/python:v1.48.0-noble
+# Tried Microsoft's Playwright Python image (mcr.microsoft.com/playwright/python:
+# v1.48.0-jammy → Python 3.10 too old; v1.48.0-noble → tag may not exist for
+# v1.48). Switched to upstream python:3.12-slim which is guaranteed to exist
+# and matches our >=3.11 pyproject requirement. Playwright installs its own
+# Chromium + OS deps via `--with-deps`.
+FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -15,10 +17,8 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Copy project manifest AND the package directories together. Hatchling's
-# editable install (`pip install -e .`) reads pyproject.toml's
-# [tool.hatch.build.targets.wheel].packages and needs those paths to exist
-# at install time. Earlier version split COPY pyproject.toml from COPY src
-# and pip install failed in 2 sec on Railway.
+# editable install (`pip install -e .`) needs the packages declared in
+# [tool.hatch.build.targets.wheel].packages to exist at install time.
 COPY pyproject.toml ./
 COPY shared/ shared/
 COPY task1_browser_agent/ task1_browser_agent/
@@ -27,14 +27,12 @@ COPY prompts/ prompts/
 
 RUN pip install --upgrade pip && pip install -e .
 
-# The base image ships a Chromium matched to the image tag (v1.48). If
-# pip resolves a newer Playwright python package, its expected browser
-# revision differs and `playwright.async_api` blows up at startup.
-# `playwright install chromium` is a no-op if the right version is already
-# present; otherwise it fetches it (~150 MB, ~1 min).
-RUN playwright install chromium
+# Playwright's `--with-deps` runs apt-get install for every shared library
+# the headless Chromium needs (libnss3, libcups2, libxkbcommon0, etc.).
+# Adds ~250 MB to the image (Chromium binary + deps) and ~90 s to the
+# build. Worth it: avoids guessing the apt list ourselves.
+RUN playwright install --with-deps chromium
 
 EXPOSE 8000
-# Railway injects PORT dynamically — use shell form so the variable expands.
-# Fallback to 8000 for local docker-run.
+# Railway injects PORT dynamically — shell form so the variable expands.
 CMD uvicorn task1_browser_agent.api.main:app --host 0.0.0.0 --port ${PORT:-8000}
