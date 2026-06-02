@@ -237,7 +237,55 @@ export async function createExtraction(sourceUrl: string): Promise<Task2Job> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source_url: sourceUrl }),
   });
-  if (!res.ok) throw new Error(`createExtraction failed: ${res.status}`);
+  if (!res.ok) {
+    // FastAPI returns 422 as {"detail":[{"loc":[...],"msg":"...","type":"..."}, ...]}
+    // Parse so the UI can show "URL is too short" rather than a bare HTTP code.
+    let detail = "";
+    try {
+      const body = await res.json();
+      if (Array.isArray(body?.detail)) {
+        detail = body.detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join("; ");
+      } else if (typeof body?.detail === "string") {
+        detail = body.detail;
+      }
+    } catch { /* not json */ }
+    throw new Error(detail ? `${res.status} — ${detail}` : `createExtraction failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface EdgarLookupResult {
+  ticker: string;
+  company: string;
+  cik: number;
+  industry: string;
+  fiscal_year: number;
+  accession_number: string;
+  filed_date: string;
+  url: string;
+}
+
+export interface EdgarLookupError {
+  kind: "ticker_unknown" | "filing_not_found" | "edgar_lookup_failed";
+  message: string;
+  supported_tickers?: string[];
+}
+
+export async function lookupEdgar(
+  ticker: string,
+  year?: number,
+): Promise<EdgarLookupResult> {
+  const qs = new URLSearchParams({ ticker });
+  if (year) qs.set("year", String(year));
+  const res = await fetch(`${API_BASE}/task2/edgar/lookup?${qs.toString()}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err: EdgarLookupError =
+      body?.detail && typeof body.detail === "object"
+        ? body.detail
+        : { kind: "edgar_lookup_failed", message: `HTTP ${res.status}` };
+    throw err;
+  }
   return res.json();
 }
 

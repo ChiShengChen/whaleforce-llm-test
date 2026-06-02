@@ -26,6 +26,64 @@ class CreateExtractionBody(BaseModel):
     source_url: str = Field(min_length=10, max_length=2000)
 
 
+@router.get("/edgar/lookup")
+async def edgar_lookup(
+    ticker: str,
+    year: int | None = None,
+) -> dict[str, str | int | None]:
+    """Resolve a ticker (+ optional fiscal year) to an EDGAR 10-K URL.
+
+    Calls the same SEC submissions-API helper the eval set generator uses.
+    Returns 404 with a friendly message when the ticker is not in our
+    KNOWN_CIKS table or the requested year is not in the filer's history.
+    """
+    from task2_10k_extractor.eval.edgar_lookup import KNOWN_CIKS, resolve_filing
+
+    t = ticker.strip().upper()
+    if t not in KNOWN_CIKS:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "kind": "ticker_unknown",
+                "message": (
+                    f"Ticker '{t}' is not in our supported list. "
+                    "Add it to KNOWN_CIKS in task2_10k_extractor/eval/edgar_lookup.py, "
+                    "or paste a full EDGAR URL instead."
+                ),
+                "supported_tickers": sorted(KNOWN_CIKS.keys()),
+            },
+        )
+    try:
+        ref = await resolve_filing(t, fiscal_year=year)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502,
+            detail={"kind": "edgar_lookup_failed", "message": str(e)[:300]},
+        )
+    if ref is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "kind": "filing_not_found",
+                "message": (
+                    f"No 10-K found for {t}"
+                    + (f" fiscal year {year}" if year else " in EDGAR recent block")
+                    + "."
+                ),
+            },
+        )
+    return {
+        "ticker": ref.ticker,
+        "company": ref.ticker,
+        "cik": ref.cik,
+        "industry": ref.industry,
+        "fiscal_year": ref.fiscal_year,
+        "accession_number": ref.accession_number,
+        "filed_date": ref.filed_date,
+        "url": ref.url,
+    }
+
+
 @router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
