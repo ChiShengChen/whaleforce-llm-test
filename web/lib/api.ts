@@ -335,7 +335,8 @@ export async function getExtraction(jobId: string): Promise<Task2Job> {
 // Failure inspector — full job lookup with eval metadata
 // -----------------------------------------------------------------------------
 
-export interface JobInspectorPayload {
+export interface Task1InspectorPayload {
+  kind: "task1";
   job: JobView & { steps: StepResult[]; plan: PlannedStep[] };
   source: "memory" | "eval_sidecar";
   eval_metadata?: {
@@ -347,6 +348,13 @@ export interface JobInspectorPayload {
     fault_status: Record<string, unknown> | null;
   };
 }
+
+export interface Task2InspectorPayload {
+  kind: "task2";
+  job: Task2Job;
+}
+
+export type JobInspectorPayload = Task1InspectorPayload | Task2InspectorPayload;
 
 export interface PlannedStep {
   index: number;
@@ -379,9 +387,21 @@ export interface StepResult {
 }
 
 export async function getJobInspector(jobId: string): Promise<JobInspectorPayload> {
-  const res = await fetch(`${API_BASE}/task1/jobs/${jobId}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`getJobInspector failed: ${res.status}`);
-  return res.json();
+  // Try Task 1 store + eval sidecars first
+  const t1 = await fetch(`${API_BASE}/task1/jobs/${jobId}`, { cache: "no-store" });
+  if (t1.ok) {
+    const data = await t1.json();
+    return { kind: "task1", ...data };
+  }
+  // Fall back to Task 2 store (10-K extractor jobs use a different namespace)
+  if (t1.status === 404) {
+    const t2 = await fetch(`${API_BASE}/task2/extractions/${jobId}`, { cache: "no-store" });
+    if (t2.ok) {
+      const job: Task2Job = await t2.json();
+      return { kind: "task2", job };
+    }
+  }
+  throw new Error(`getJobInspector failed: ${t1.status}`);
 }
 
 export async function getJobIdForCase(caseId: string): Promise<string | null> {
