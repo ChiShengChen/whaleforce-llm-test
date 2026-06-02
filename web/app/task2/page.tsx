@@ -2,42 +2,36 @@
 
 import { useState } from "react";
 import {
-  EdgarLookupError,
+  EdgarParseError,
+  EdgarParseResult,
   ExtractedItem,
   Task2Job,
   createExtraction,
-  lookupEdgar,
+  parseEdgarInput,
   pollExtraction,
 } from "@/lib/api";
 import { Linkify, fmtUSD, fmtDuration } from "@/lib/format";
 
-// Tickers we have CIKs for on the backend. Keep in sync with KNOWN_CIKS in
-// task2_10k_extractor/eval/edgar_lookup.py.
-const KNOWN_TICKERS = new Set([
-  "AAPL", "MSFT", "GOOG", "META", "JPM", "BAC", "XOM", "CVX",
-  "WMT", "TGT", "PFE", "JNJ", "SPG", "BA",
-]);
+function looksLikeUrl(s: string): boolean {
+  return /^https?:\/\//i.test(s.trim());
+}
 
-// Match "AAPL" or "AAPL 2024" or "aapl-2024" or "AAPL/2024".
-const TICKER_PATTERN = /^([A-Za-z]{1,5})(?:[\s\-/]+(\d{4}))?$/;
-
-function classifyInput(raw: string): {
-  kind: "url" | "ticker" | "ticker_unknown" | "unclear";
-  url?: string;
-  ticker?: string;
-  year?: number;
-} {
-  const trimmed = raw.trim();
-  if (!trimmed) return { kind: "unclear" };
-  if (/^https?:\/\//i.test(trimmed)) return { kind: "url", url: trimmed };
-  const m = TICKER_PATTERN.exec(trimmed);
-  if (m) {
-    const ticker = m[1].toUpperCase();
-    const year = m[2] ? parseInt(m[2], 10) : undefined;
-    if (KNOWN_TICKERS.has(ticker)) return { kind: "ticker", ticker, year };
-    return { kind: "ticker_unknown", ticker, year };
+function describeParseError(err: EdgarParseError): string {
+  if (err.kind === "ticker_unknown") {
+    const guess = err.company_guess ? ` (interpreted as ${err.company_guess}, ${err.ticker})` : "";
+    return `Ticker not in SEC's public registry${guess}. Try a US-listed ticker or paste a direct EDGAR URL.`;
   }
-  return { kind: "unclear" };
+  if (err.kind === "unsupported") {
+    return err.reason || "Only 10-K filings are supported.";
+  }
+  if (err.kind === "filing_not_found") {
+    return err.message || `No 10-K found for ${err.ticker}${err.year ? " " + err.year : ""}.`;
+  }
+  if (err.kind === "refuse") {
+    return (err.reason || "Could not interpret as an SEC 10-K request.") +
+      " Try a company name like 'Apple', a ticker like 'JPM 2023', or a direct EDGAR URL.";
+  }
+  return err.message || err.reason || "Could not parse input.";
 }
 
 const EXAMPLES: { label: string; url: string }[] = [
@@ -143,6 +137,8 @@ export default function Task2Page() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [interpretation, setInterpretation] = useState<EdgarParseResult | null>(null);
+  const [parsing, setParsing] = useState(false);
 
   async function submit() {
     const trimmed = url.trim();
@@ -150,39 +146,28 @@ export default function Task2Page() {
     setBusy(true);
     setErr(null);
     setJob(null);
+    setInterpretation(null);
 
-    const classified = classifyInput(trimmed);
     let resolvedUrl = "";
-    if (classified.kind === "url") {
-      resolvedUrl = classified.url!;
-    } else if (classified.kind === "ticker") {
+    if (looksLikeUrl(trimmed)) {
+      resolvedUrl = trimmed;
+      setInterpretation({ url: trimmed, interpretation: "Direct EDGAR URL" });
+    } else {
+      // Free-text → LLM parser → URL.
+      setParsing(true);
       try {
-        const ref = await lookupEdgar(classified.ticker!, classified.year);
+        const ref = await parseEdgarInput(trimmed);
         resolvedUrl = ref.url;
-        // Reflect the resolved URL in the input so the user sees the actual
-        // EDGAR archive path they're about to extract from.
+        setInterpretation(ref);
         setUrl(ref.url);
       } catch (e) {
-        const er = e as EdgarLookupError;
-        setErr(`EDGAR lookup: ${er.message || JSON.stringify(er)}`);
+        const er = e as EdgarParseError;
+        setErr(describeParseError(er));
         setBusy(false);
+        setParsing(false);
         return;
       }
-    } else if (classified.kind === "ticker_unknown") {
-      setErr(
-        `Ticker '${classified.ticker}' is not in our supported set. ` +
-          "Try one of: " + Array.from(KNOWN_TICKERS).sort().join(", ") +
-          " — or paste a direct EDGAR URL (https://www.sec.gov/Archives/edgar/data/.../...htm).",
-      );
-      setBusy(false);
-      return;
-    } else {
-      setErr(
-        "Input must be either a full EDGAR URL (starting with https://) or " +
-          "a supported ticker like 'AAPL 2024'.",
-      );
-      setBusy(false);
-      return;
+      setParsing(false);
     }
 
     try {
@@ -238,24 +223,32 @@ export default function Task2Page() {
         <input
           type="text"
           className="w-full bg-zinc-900 border border-zinc-800 rounded p-2 text-xs font-mono focus:outline-none focus:border-emerald-700"
-          placeholder="Paste an EDGAR URL, or type a ticker like 'AAPL 2024'…"
+          placeholder="e.g. 'Apple 2024', 'JPM 2023 10-K', '微軟 年報', or paste a full EDGAR URL…"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           disabled={busy}
         />
         <p className="text-[11px] text-zinc-500 leading-relaxed">
-          Two accepted inputs:&nbsp;
-          <span className="text-zinc-300">(1)</span> a full EDGAR archive URL
-          <span className="text-zinc-600"> (https://www.sec.gov/Archives/edgar/data/.../...htm)</span>,
-          or&nbsp;
-          <span className="text-zinc-300">(2)</span> a supported ticker, optionally with year:&nbsp;
-          <code className="text-zinc-300">AAPL</code>,&nbsp;
-          <code className="text-zinc-300">JPM 2023</code>,&nbsp;
-          <code className="text-zinc-300">XOM</code>. Supported tickers:&nbsp;
-          <span className="text-zinc-400 font-mono">
-            AAPL · MSFT · GOOG · META · JPM · BAC · XOM · CVX · WMT · TGT · PFE · JNJ · SPG · BA
-          </span>
+          Type anything — the system parses with a cheap LLM call (~$0.0001).
+          Examples:&nbsp;
+          <code className="text-zinc-300">Apple 2024</code>,&nbsp;
+          <code className="text-zinc-300">JPM 2023 10-K</code>,&nbsp;
+          <code className="text-zinc-300">微軟 年報</code>,&nbsp;
+          <code className="text-zinc-300">Tesla</code>, or a full EDGAR URL.
+          Foreign filers (20-F) and non-10-K forms (10-Q etc.) get a typed
+          refusal rather than wrong data.
         </p>
+        {interpretation && !err && (
+          <div className="border border-emerald-800/50 bg-emerald-950/20 rounded p-2 text-xs text-zinc-200 flex items-center gap-2">
+            <span className="text-emerald-400 font-semibold">Resolved →</span>
+            <span>{interpretation.interpretation}</span>
+            {interpretation.parse_cost_usd !== undefined && interpretation.parse_cost_usd > 0 && (
+              <span className="text-zinc-500 ml-auto">
+                parser cost ${interpretation.parse_cost_usd.toFixed(6)}
+              </span>
+            )}
+          </div>
+        )}
         <div className="flex flex-wrap gap-2 text-xs">
           {EXAMPLES.map((ex) => (
             <button
@@ -275,7 +268,7 @@ export default function Task2Page() {
             disabled={busy || !url.trim()}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:cursor-not-allowed text-zinc-50 text-sm rounded transition-colors"
           >
-            {busy ? "Extracting…" : "Extract items"}
+            {parsing ? "Parsing…" : busy ? "Extracting…" : "Extract items"}
           </button>
           {finished && (
             <button

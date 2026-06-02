@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -24,6 +25,155 @@ _JOBS: dict[str, Task2Job] = {}
 
 class CreateExtractionBody(BaseModel):
     source_url: str = Field(min_length=10, max_length=2000)
+
+
+class ParseInputBody(BaseModel):
+    input: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/edgar/parse")
+async def edgar_parse(body: ParseInputBody) -> dict:
+    """LLM-powered free-text input parser.
+
+    Accepts any input (English / Chinese / mixed) and returns the resolved
+    EDGAR URL plus an `interpretation` string the frontend can show as a
+    "Resolved as: …" pill.
+
+    Single call from the frontend covers four flows:
+      - User pastes a URL → returned directly.
+      - User names a company → LLM extracts ticker → SEC submissions
+        API → 10-K URL.
+      - User wants a non-10-K form (10-Q etc.) → typed refusal.
+      - User input has no SEC context → typed refusal.
+
+    Uses CHEAP-tier LLM (~$0.0001/call) + Anthropic-style prompt caching
+    on the system prompt. Total added latency vs. URL paste path: ~1 s.
+    """
+    from shared.llm_gateway import LLMGateway, LLMRequest, Tier, new_trace_id
+    from task1_browser_agent.agent.prompt_loader import render as _render
+    from task2_10k_extractor.eval.edgar_lookup import (
+        KNOWN_CIKS,
+        resolve_filing,
+    )
+
+    # Load the input_parser prompt from disk (split into system + user template).
+    parser_dir = Path(__file__).resolve().parents[2] / "prompts" / "task2_10k"
+    raw = (parser_dir / "input_parser.md").read_text(encoding="utf-8")
+    system = raw.split("## System", 1)[1].split("## User template", 1)[0].strip()
+    user_tmpl = raw.split("## User template", 1)[1].strip()
+    user = _render(user_tmpl, user_input=body.input.strip())
+
+    trace = new_trace_id()
+    try:
+        resp = await LLMGateway.instance().call(
+            LLMRequest(
+                trace_id=trace,
+                purpose="task2.edgar_parser",
+                tier=Tier.CHEAP,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+                max_tokens=250,
+                temperature=0.0,
+                response_format="json",
+                cache_system=True,
+            ),
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502,
+            detail={"kind": "llm_failed", "message": str(e)[:200]},
+        )
+
+    parsed = resp.parsed_json or {}
+    kind = parsed.get("kind")
+
+    if kind == "url":
+        target = str(parsed.get("url", "")).strip()
+        if not target.startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=400,
+                detail={"kind": "refuse", "reason": "LLM returned a non-http URL"},
+            )
+        return {
+            "url": target,
+            "interpretation": "Direct EDGAR URL",
+            "trace_id": trace,
+            "parse_cost_usd": round(resp.cost_usd, 6),
+        }
+
+    if kind == "ticker_query":
+        ticker = str(parsed.get("ticker", "")).upper().strip()
+        year = parsed.get("year")
+        company_guess = parsed.get("company_guess")
+        if not ticker:
+            raise HTTPException(
+                status_code=400,
+                detail={"kind": "refuse", "reason": "LLM did not produce a ticker"},
+            )
+        try:
+            ref = await resolve_filing(ticker, fiscal_year=year if isinstance(year, int) else None)
+        except KeyError as e:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "kind": "ticker_unknown",
+                    "ticker": ticker,
+                    "company_guess": company_guess,
+                    "message": str(e),
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(
+                status_code=502,
+                detail={"kind": "edgar_lookup_failed", "message": str(e)[:200]},
+            )
+        if ref is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "kind": "filing_not_found",
+                    "ticker": ticker,
+                    "year": year,
+                    "message": (
+                        f"No 10-K found for {ticker}"
+                        + (f" fiscal year {year}" if year else "")
+                        + "."
+                    ),
+                },
+            )
+        company_label = company_guess or ticker
+        interpretation = (
+            f"{company_label} ({ref.ticker}) — FY{ref.fiscal_year} 10-K, "
+            f"accession {ref.accession_number}"
+        )
+        return {
+            "url": ref.url,
+            "interpretation": interpretation,
+            "ticker": ref.ticker,
+            "year": ref.fiscal_year,
+            "industry": ref.industry,
+            "trace_id": trace,
+            "parse_cost_usd": round(resp.cost_usd, 6),
+        }
+
+    if kind == "unsupported":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "kind": "unsupported",
+                "reason": parsed.get("reason", "Form type other than 10-K"),
+                "company_guess": parsed.get("company_guess"),
+            },
+        )
+
+    # kind == "refuse" or unrecognised
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "kind": "refuse",
+            "reason": parsed.get("reason", "Could not interpret as an SEC 10-K request."),
+        },
+    )
 
 
 @router.get("/edgar/lookup")

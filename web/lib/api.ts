@@ -271,6 +271,42 @@ export interface EdgarLookupError {
   supported_tickers?: string[];
 }
 
+export interface EdgarParseResult {
+  url: string;
+  interpretation: string;
+  ticker?: string;
+  year?: number;
+  industry?: string;
+  trace_id?: string;
+  parse_cost_usd?: number;
+}
+
+export interface EdgarParseError {
+  kind: "refuse" | "unsupported" | "ticker_unknown" | "filing_not_found" | "edgar_lookup_failed" | "llm_failed";
+  reason?: string;
+  message?: string;
+  ticker?: string;
+  company_guess?: string;
+  year?: number;
+}
+
+export async function parseEdgarInput(input: string): Promise<EdgarParseResult> {
+  const res = await fetch(`${API_BASE}/task2/edgar/parse`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err: EdgarParseError =
+      body?.detail && typeof body.detail === "object"
+        ? body.detail
+        : { kind: "llm_failed", message: `HTTP ${res.status}` };
+    throw err;
+  }
+  return res.json();
+}
+
 export async function lookupEdgar(
   ticker: string,
   year?: number,

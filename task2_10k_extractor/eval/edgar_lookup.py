@@ -74,6 +74,38 @@ async def fetch_submissions(cik: int) -> dict:
         return resp.json()
 
 
+# SEC's public ticker-to-CIK mapping. Single download (~1.6 MB) covers every
+# SEC-registered ticker. Cached in-process so we hit it at most once per
+# Python process; safe to call concurrently (the dict is built atomically).
+_SEC_TICKER_MAP: dict[str, int] | None = None
+_SEC_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
+
+
+async def fetch_sec_ticker_map() -> dict[str, int]:
+    """Return a UPPERCASE-ticker → CIK mapping for every SEC filer.
+
+    Schema from SEC: `{"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}, ...}`
+    """
+    global _SEC_TICKER_MAP
+    if _SEC_TICKER_MAP is not None:
+        return _SEC_TICKER_MAP
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(
+            _SEC_TICKER_MAP_URL,
+            headers={"User-Agent": SEC_UA, "Accept": "application/json"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    out: dict[str, int] = {}
+    for entry in data.values():
+        ticker = str(entry.get("ticker", "")).upper().strip()
+        cik = entry.get("cik_str")
+        if ticker and isinstance(cik, int):
+            out[ticker] = cik
+    _SEC_TICKER_MAP = out
+    return out
+
+
 async def fetch_all_historical(cik: int) -> dict:
     """Fetch submissions PLUS all paginated historical files.
 
@@ -160,24 +192,41 @@ def _pick_10k_filing(
 async def resolve_filing(
     ticker: str, *, fiscal_year: int | None = None
 ) -> FilingRef | None:
-    meta = KNOWN_CIKS.get(ticker)
-    if not meta:
-        raise KeyError(f"unknown ticker {ticker!r} — add to KNOWN_CIKS")
-    submissions = await fetch_submissions(int(meta["cik"]))
+    """Resolve a ticker (+ optional fiscal year) to an EDGAR FilingRef.
+
+    Lookup order:
+      1. Our curated KNOWN_CIKS — gives industry metadata for the eval set.
+      2. SEC's public ticker→CIK map — covers every SEC-registered filer
+         (~13k entries). Industry recorded as "unknown".
+
+    Raises KeyError only if neither layer recognises the ticker.
+    """
+    t = ticker.strip().upper()
+    meta = KNOWN_CIKS.get(t)
+    if meta is not None:
+        cik = int(meta["cik"])
+        industry = str(meta["industry"])
+    else:
+        sec_map = await fetch_sec_ticker_map()
+        if t not in sec_map:
+            raise KeyError(f"ticker {t!r} not in our KNOWN_CIKS nor in SEC's public ticker map")
+        cik = sec_map[t]
+        industry = "unknown"
+    submissions = await fetch_submissions(cik)
     picked = _pick_10k_filing(submissions, fiscal_year=fiscal_year)
     if picked is None and fiscal_year is not None:
         # Specific year requested but missing from `recent` — fall through
         # to paginated historical files. Costs an extra fetch per file, ~5
         # files for a 20-year-old filer.
-        submissions = await fetch_all_historical(int(meta["cik"]))
+        submissions = await fetch_all_historical(cik)
         picked = _pick_10k_filing(submissions, fiscal_year=fiscal_year)
     if picked is None:
         return None
     accession, primary, filed, fy = picked
     return FilingRef(
-        ticker=ticker,
-        cik=int(meta["cik"]),
-        industry=str(meta["industry"]),
+        ticker=t,
+        cik=cik,
+        industry=industry,
         fiscal_year=fy,
         accession_number=accession,
         primary_document=primary,
