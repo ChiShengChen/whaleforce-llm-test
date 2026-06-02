@@ -241,8 +241,156 @@ async def health() -> dict[str, str]:
 
 @router.get("/capabilities")
 async def capabilities() -> dict[str, object]:
+    """Detailed capability matrix.
+
+    `proven_supported_filings` and `known_failure_cases` are CONCRETE example
+    URLs drawn from our eval baseline, so reviewers can verify behaviour
+    directly. `format_categories` enumerates the broader format buckets and
+    `refusal_categories` documents the typed-refusal flows that prevent the
+    system from hallucinating answers on out-of-scope inputs.
+    """
     return {
+        "proven_supported_filings": [
+            # Pass cases from the committed task2_10k_extractor/eval/report.json
+            # baseline (19/20 across 7 industries + 3 pre-iXBRL filings).
+            {
+                "label": "Apple (AAPL) FY2023 10-K",
+                "industry": "tech",
+                "url": "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106/aapl-20230930.htm",
+                "items_extracted": 23,
+                "overall_confidence": 0.948,
+                "method_mix": "L1 × 23",
+                "cost_usd": 0.0,
+                "notes": "Modern iXBRL — golden case for L1 anchor extractor",
+            },
+            {
+                "label": "Microsoft (MSFT) FY2023 10-K",
+                "industry": "tech",
+                "url": "https://www.sec.gov/Archives/edgar/data/789019/000095017023035122/msft-20230630.htm",
+                "items_extracted": 22,
+                "overall_confidence": 0.948,
+                "method_mix": "L1 × 22",
+                "cost_usd": 0.0,
+                "notes": "Page running-headers DOM exercises density-based TOC + first-with-gap heuristic (see bug T2.1 in VERIFICATION.md)",
+            },
+            {
+                "label": "JPMorgan Chase (JPM) FY2025 10-K",
+                "industry": "bank",
+                "url": "https://www.sec.gov/Archives/edgar/data/19617/000162828026008131/jpm-20251231.htm",
+                "items_extracted": 22,
+                "overall_confidence": 0.947,
+                "method_mix": "L1 × 22",
+                "cost_usd": 0.0,
+                "notes": "Large bank filing — incorporated-by-reference handled gracefully",
+            },
+            {
+                "label": "ExxonMobil (XOM) FY2025 10-K",
+                "industry": "energy",
+                "url": "https://www.sec.gov/Archives/edgar/data/34088/000003408826000045/xom-20251231.htm",
+                "items_extracted": 22,
+                "overall_confidence": 0.946,
+                "method_mix": "L1 × 22",
+                "cost_usd": 0.0,
+            },
+            {
+                "label": "Walmart (WMT) FY2026 10-K",
+                "industry": "retail",
+                "url": "https://www.sec.gov/Archives/edgar/data/104169/000010416926000055/wmt-20260131.htm",
+                "items_extracted": 23,
+                "overall_confidence": 0.935,
+                "method_mix": "L1 × 23",
+                "cost_usd": 0.0,
+                "notes": "Different fiscal-year-end (January) — confirms year-independence",
+            },
+            {
+                "label": "Johnson & Johnson (JNJ) FY2025 10-K",
+                "industry": "pharma",
+                "url": "https://www.sec.gov/Archives/edgar/data/200406/000020040626000016/jnj-20251228.htm",
+                "items_extracted": 23,
+                "overall_confidence": 0.948,
+                "method_mix": "L1 × 23",
+                "cost_usd": 0.0,
+            },
+            {
+                "label": "Apple (AAPL) FY2015 10-K — pre-iXBRL",
+                "industry": "tech",
+                "url": "https://www.sec.gov/Archives/edgar/data/320193/000119312515356351/d17062d10k.htm",
+                "items_extracted": 20,
+                "overall_confidence": 0.948,
+                "method_mix": "L1 × 20",
+                "cost_usd": 0.0,
+                "notes": "Pre-iXBRL plain HTML — proves L1 anchor extractor is not iXBRL-dependent",
+            },
+            {
+                "label": "JPMorgan Chase (JPM) FY2015 10-K — pre-iXBRL",
+                "industry": "bank",
+                "url": "https://www.sec.gov/Archives/edgar/data/19617/000001961716000902/corp10k2015.htm",
+                "items_extracted": 20,
+                "overall_confidence": 0.947,
+                "method_mix": "L1 × 20",
+                "cost_usd": 0.0,
+                "notes": "Pre-iXBRL bank filing — heavily references-by-reference",
+            },
+        ],
+        "known_failure_cases": [
+            {
+                "label": "Microsoft (MSFT) FY2015 10-K — pre-iXBRL",
+                "url": "https://www.sec.gov/Archives/edgar/data/789019/000119312515272806/d918813d10k.htm",
+                "issue": "Item 8 (Financial Statements and Supplementary Data) cannot be located",
+                "root_cause": "Pre-iXBRL filing incorporates Item 8 entirely by reference to financial statement exhibits — no in-document section exists",
+                "system_response": "Quarantined with `required item '8' missing` reason. System refuses to fabricate content rather than hallucinating",
+                "fix_direction": "L3 LLM probe could detect the reference pattern and emit a structured 'incorporated by reference' marker rather than just missing",
+            },
+        ],
+        "format_categories": {
+            "supported": [
+                "Modern iXBRL 10-K (2017+) — golden path",
+                "Pre-iXBRL plain HTML 10-K (any year)",
+                "10-K filings with page running-headers, TOC anchors, density-detected TOC",
+                "Filings with incorporated-by-reference content (Items 10–14 commonly)",
+            ],
+            "unsupported_or_unreliable": [
+                {
+                    "pattern": "Foreign filers (file 20-F, not 10-K)",
+                    "example": "TSMC, Toyota, ASML",
+                    "system_response": "LLM input parser returns `kind: 'unsupported'` with explanation",
+                },
+                {
+                    "pattern": "Other SEC forms — 10-Q, 8-K, S-1, 13F-HR, 13D",
+                    "example": "Tesla 10-Q",
+                    "system_response": "Same — typed `unsupported` refusal from parser",
+                },
+                {
+                    "pattern": "Image-only PDF filings",
+                    "example": "Some smaller filers' historical 10-Ks",
+                    "system_response": "No OCR layer; ingestion produces empty IR and quarantines with `no items extracted`",
+                },
+                {
+                    "pattern": "10-K/A amendments — tracked but not differentiated",
+                    "example": "Filings ending in 10-K/A",
+                    "system_response": "Pipeline extracts items, but `is_amendment` field not yet surfaced (planned in PRODUCTION_HARDENING_ROADMAP Week 8)",
+                },
+            ],
+        },
+        "refusal_categories": [
+            {
+                "category": "Unknown ticker",
+                "example_input": "PTLR 2024 (not a current SEC-registered symbol; Permian Resources actually trades as PR)",
+                "system_response": "HTTP 404 — `Ticker not in SEC's public registry`. Frontend shows actionable guidance",
+            },
+            {
+                "category": "Non-public-company input",
+                "example_input": "what is the meaning of life",
+                "system_response": "LLM parser returns `kind: 'refuse'` with reason: `Input does not name a specific publicly-traded company`",
+            },
+            {
+                "category": "Vague company reference",
+                "example_input": "the search engine company",
+                "system_response": "Typed refuse — parser is instructed to refuse rather than hallucinate a ticker without explicit naming",
+            },
+        ],
         "supported": [
+            # Backward-compat field for clients of the previous schema.
             {
                 "kind": "Modern iXBRL 10-K (2016+)",
                 "example": "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106/aapl-20230930.htm",
@@ -250,29 +398,30 @@ async def capabilities() -> dict[str, object]:
             },
             {
                 "kind": "Plain HTML 10-K",
-                "example": "older Apple / generic large-cap filings",
-                "notes": "L1 works as long as headings include the literal 'Item X.' marker.",
+                "example": "https://www.sec.gov/Archives/edgar/data/320193/000119312515356351/d17062d10k.htm",
+                "notes": "Pre-iXBRL filings — L1 works as long as headings include the literal 'Item X.' marker.",
             },
         ],
         "unsupported_or_unreliable": [
             {
-                "pattern": "10-K filings only — other forms (10-Q, 8-K, S-1) untested",
-                "reason": "Item schema (Items 1–16) is 10-K specific; would need a separate schema.",
+                "pattern": "10-K filings only — other forms (10-Q, 8-K, S-1, 20-F) get a typed refusal",
+                "reason": "Item schema (Items 1–16) is 10-K specific; LLM parser refuses non-10-K forms rather than misapplying the schema",
             },
             {
                 "pattern": "Image-only PDF filings",
                 "reason": "No OCR layer; we read HTML only.",
             },
             {
-                "pattern": "Filings with non-standard item numbering",
-                "reason": "Some foreign issuers and amendments deviate from Items 1–16 ordering.",
+                "pattern": "Filings with non-standard item numbering (e.g. older foreign issuers)",
+                "reason": "Some foreign issuers and amendments deviate from Items 1–16 ordering; LLM parser refuses 20-F filers up front",
             },
         ],
         "extraction_layers": {
-            "L1_anchor": "implemented — regex + heading scan, zero LLM cost",
-            "L2_structural": "stub — heading hierarchy + TOC reverse-lookup (next iteration)",
-            "L3_llm_self_consistency": "stub — two-prompt boundary cross-check (next iteration)",
+            "L1_anchor": "implemented — regex + heading scan + density-based TOC + first-with-gap heuristic, zero LLM cost",
+            "L2_structural": "implemented — TOC anchor reverse-lookup via captured anchor targets, zero LLM cost",
+            "L3_llm_self_consistency": "implemented — two independent prompts + boundary IoU agreement check, cost-capped per filing",
             "quarantine_threshold": 0.45,
+            "confidence_calibration": "Platt-scaled sigmoid trained on 192 synthetic labels — ECE 0.056 (production calibration requires ~20 human-graded examples)",
         },
         "schema_version": "1.0.0",
     }

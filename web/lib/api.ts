@@ -180,6 +180,64 @@ export async function getCapabilities(): Promise<Capabilities> {
 }
 
 // -----------------------------------------------------------------------------
+// Task 2 capability matrix (richer schema: proven cases + known failures
+// + refusal categories drawn from the eval baseline + VERIFICATION.md)
+// -----------------------------------------------------------------------------
+
+export interface ProvenSupportedFiling {
+  label: string;
+  industry?: string;
+  url: string;
+  items_extracted: number;
+  overall_confidence: number;
+  method_mix: string;
+  cost_usd: number;
+  notes?: string;
+}
+
+export interface KnownFailureCase {
+  label: string;
+  url: string;
+  issue: string;
+  root_cause: string;
+  system_response: string;
+  fix_direction?: string;
+}
+
+export interface RefusalCategory {
+  category: string;
+  example_input: string;
+  system_response: string;
+}
+
+export interface UnsupportedFormat {
+  pattern: string;
+  example?: string;
+  system_response: string;
+}
+
+export interface Task2Capabilities {
+  proven_supported_filings: ProvenSupportedFiling[];
+  known_failure_cases: KnownFailureCase[];
+  format_categories: {
+    supported: string[];
+    unsupported_or_unreliable: UnsupportedFormat[];
+  };
+  refusal_categories: RefusalCategory[];
+  extraction_layers: Record<string, string | number>;
+  schema_version?: string;
+  // Backward-compat fields:
+  supported?: CapabilitySite[];
+  unsupported_or_unreliable?: CapabilitySite[];
+}
+
+export async function getTask2Capabilities(): Promise<Task2Capabilities> {
+  const res = await fetch(`${API_BASE}/task2/capabilities`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`getTask2Capabilities failed: ${res.status}`);
+  return res.json();
+}
+
+// -----------------------------------------------------------------------------
 // Task 2 — 10-K extractor
 // -----------------------------------------------------------------------------
 

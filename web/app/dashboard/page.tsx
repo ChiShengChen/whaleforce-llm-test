@@ -6,11 +6,14 @@ import {
   CostSummary,
   EvalReport,
   RecentJob,
+  Task2Capabilities,
   getCapabilities,
   getCostSummary,
   getEvalReport,
   getRecentJobs,
+  getTask2Capabilities,
 } from "@/lib/api";
+import { Linkify } from "@/lib/format";
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: "text-emerald-400",
@@ -71,15 +74,23 @@ export default function DashboardPage() {
   const [cost, setCost] = useState<CostSummary | null>(null);
   const [recent, setRecent] = useState<RecentJob[]>([]);
   const [caps, setCaps] = useState<Capabilities | null>(null);
+  const [task2Caps, setTask2Caps] = useState<Task2Capabilities | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([getEvalReport(), getCostSummary(), getRecentJobs(8), getCapabilities()])
-      .then(([e, c, r, cap]) => {
+    Promise.all([
+      getEvalReport(),
+      getCostSummary(),
+      getRecentJobs(8),
+      getCapabilities(),
+      getTask2Capabilities(),
+    ])
+      .then(([e, c, r, cap, t2cap]) => {
         setEvalReport(e);
         setCost(c);
         setRecent(r);
         setCaps(cap);
+        setTask2Caps(t2cap);
       })
       .catch((e) => setErr(String(e)));
   }, []);
@@ -328,7 +339,10 @@ export default function DashboardPage() {
         )}
       </Section>
 
-      {/* ---------- Capability matrix ---------- */}
+      {/* ---------- Task 1 capability matrix ---------- */}
+      <h2 id="task1-capabilities" className="text-sm font-semibold text-zinc-300 pt-2">
+        Task 1 — Browser Agent capability matrix
+      </h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Section title="Supported sites" hint={caps ? `${caps.supported_sites.length} entries` : ""}>
           {!caps ? (
@@ -360,6 +374,132 @@ export default function DashboardPage() {
           )}
         </Section>
       </div>
+
+      {/* ---------- Task 2 capability matrix ---------- */}
+      <h2 id="task2-capabilities" className="text-sm font-semibold text-zinc-300 pt-2">
+        Task 2 — 10-K Extractor capability matrix
+      </h2>
+      {!task2Caps ? (
+        <p className="text-xs text-zinc-500">Loading…</p>
+      ) : (
+        <div className="space-y-4">
+          {/* Proven supported filings (concrete URLs from eval baseline) */}
+          <Section
+            title="Filings where extraction is proven to work"
+            hint={`${task2Caps.proven_supported_filings.length} eval-baselined examples`}
+          >
+            <ul className="space-y-3 text-xs">
+              {task2Caps.proven_supported_filings.map((f, i) => (
+                <li key={i} className="border-l-2 border-emerald-700 pl-2">
+                  <div className="text-emerald-400 font-semibold">{f.label}</div>
+                  <div className="text-zinc-500 text-[11px] mt-0.5 flex flex-wrap gap-3">
+                    <span>{f.items_extracted} items</span>
+                    <span>· conf {(f.overall_confidence * 100).toFixed(1)}%</span>
+                    <span>· {f.method_mix}</span>
+                    <span>· cost ${f.cost_usd.toFixed(4)}</span>
+                    {f.industry && <span>· {f.industry}</span>}
+                  </div>
+                  <div className="font-mono text-[11px] mt-1 break-all">
+                    <Linkify text={f.url} />
+                  </div>
+                  {f.notes && (
+                    <div className="text-zinc-500 italic text-[11px] mt-0.5">{f.notes}</div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Section>
+
+          {/* Known failure cases — specific filings with documented issues */}
+          <Section
+            title="Known failure cases (with documented root cause + system response)"
+            hint={`${task2Caps.known_failure_cases.length} case${task2Caps.known_failure_cases.length === 1 ? "" : "s"}`}
+          >
+            {task2Caps.known_failure_cases.length === 0 ? (
+              <p className="text-xs text-zinc-500">
+                No known failure cases in the current eval baseline.
+              </p>
+            ) : (
+              <ul className="space-y-3 text-xs">
+                {task2Caps.known_failure_cases.map((f, i) => (
+                  <li key={i} className="border-l-2 border-red-700 pl-2">
+                    <div className="text-red-400 font-semibold">{f.label}</div>
+                    <div className="font-mono text-[11px] mt-1 break-all">
+                      <Linkify text={f.url} />
+                    </div>
+                    <div className="text-zinc-300 mt-1">
+                      <span className="text-zinc-500">issue: </span>
+                      {f.issue}
+                    </div>
+                    <div className="text-zinc-400 text-[11px] mt-1">
+                      <span className="text-zinc-500">root cause: </span>
+                      {f.root_cause}
+                    </div>
+                    <div className="text-emerald-300/80 text-[11px] mt-1">
+                      <span className="text-zinc-500">system response: </span>
+                      {f.system_response}
+                    </div>
+                    {f.fix_direction && (
+                      <div className="text-zinc-500 italic text-[11px] mt-1">
+                        fix direction: {f.fix_direction}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+
+          {/* Format categories — broader buckets */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Section title="Format categories supported" hint={`${task2Caps.format_categories.supported.length} bucket${task2Caps.format_categories.supported.length === 1 ? "" : "s"}`}>
+              <ul className="space-y-1.5 text-xs">
+                {task2Caps.format_categories.supported.map((s, i) => (
+                  <li key={i} className="border-l-2 border-emerald-700 pl-2 text-zinc-300">
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </Section>
+            <Section
+              title="Format categories NOT supported"
+              hint={`${task2Caps.format_categories.unsupported_or_unreliable.length} pattern${task2Caps.format_categories.unsupported_or_unreliable.length === 1 ? "" : "s"}`}
+            >
+              <ul className="space-y-2 text-xs">
+                {task2Caps.format_categories.unsupported_or_unreliable.map((u, i) => (
+                  <li key={i} className="border-l-2 border-red-700 pl-2">
+                    <div className="text-red-400 font-semibold">{u.pattern}</div>
+                    {u.example && (
+                      <div className="text-zinc-500 text-[11px]">e.g. {u.example}</div>
+                    )}
+                    <div className="text-zinc-400 text-[11px] mt-0.5">
+                      {u.system_response}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          </div>
+
+          {/* Refusal categories — typed refusals at input parse time */}
+          <Section
+            title="Typed-refusal input categories (parser rejects before any extraction)"
+            hint={`${task2Caps.refusal_categories.length} categor${task2Caps.refusal_categories.length === 1 ? "y" : "ies"}`}
+          >
+            <ul className="space-y-2 text-xs">
+              {task2Caps.refusal_categories.map((r, i) => (
+                <li key={i} className="border-l-2 border-orange-700 pl-2">
+                  <div className="text-orange-400 font-semibold">{r.category}</div>
+                  <div className="text-zinc-500 text-[11px] mt-0.5">
+                    example input: <code className="text-zinc-300">{r.example_input}</code>
+                  </div>
+                  <div className="text-zinc-400 text-[11px] mt-0.5">{r.system_response}</div>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        </div>
+      )}
 
       <footer className="text-xs text-zinc-600 pt-4 border-t border-zinc-900">
         Cache hit rate (all-time): {cost ? fmtPct(cost.cache_hit_rate) : "—"} · Tokens:{" "}

@@ -206,17 +206,26 @@ export default function Task2Page() {
 
   return (
     <div className="space-y-6">
-      <section>
-        <h1 className="text-2xl font-semibold">Task 2 — SEC 10-K Item Extractor</h1>
-        <p className="text-sm text-zinc-400 mt-1 leading-relaxed">
-          Paste any EDGAR 10-K URL. Layered pipeline:{" "}
-          <code className="text-emerald-400">L1</code> anchor →{" "}
-          <code className="text-blue-400">L2</code> structural →{" "}
-          <code className="text-purple-400">L3</code> LLM self-consistency →{" "}
-          <code className="text-yellow-400">quarantine</code> if confidence stays
-          low. Each layer only runs when cheaper layers fall short — most filings
-          finish at L1 with $0 LLM cost.
-        </p>
+      <section className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex-1 min-w-[300px]">
+          <h1 className="text-2xl font-semibold">Task 2 — SEC 10-K Item Extractor</h1>
+          <p className="text-sm text-zinc-400 mt-1 leading-relaxed">
+            Paste any EDGAR 10-K URL. Layered pipeline:{" "}
+            <code className="text-emerald-400">L1</code> anchor →{" "}
+            <code className="text-blue-400">L2</code> structural →{" "}
+            <code className="text-purple-400">L3</code> LLM self-consistency →{" "}
+            <code className="text-yellow-400">quarantine</code> if confidence stays
+            low. Each layer only runs when cheaper layers fall short — most filings
+            finish at L1 with $0 LLM cost.
+          </p>
+        </div>
+        <a
+          href="/dashboard#task2-capabilities"
+          className="text-xs text-blue-400 hover:text-blue-300 border border-blue-800/40 hover:border-blue-600 rounded-md px-3 py-1.5 whitespace-nowrap"
+          title="Concrete eval-proven filings + known failure cases + typed-refusal categories"
+        >
+          What works / what doesn&apos;t ↗
+        </a>
       </section>
 
       <section className="border border-zinc-800 rounded-md p-4 space-y-3">
