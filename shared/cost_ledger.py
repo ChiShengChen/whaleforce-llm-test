@@ -49,7 +49,12 @@ class CostRow(Base):
     cost_usd = Column(Float, nullable=False)
     latency_ms = Column(Integer, nullable=False)
     cache_hit = Column(Boolean, nullable=False, default=False)
-    occurred_at = Column(DateTime, nullable=False, index=True)
+    # `timezone=True` → Postgres TIMESTAMPTZ. Without it the column type is
+    # TIMESTAMP WITHOUT TIME ZONE and asyncpg refuses our tz-aware
+    # datetime.now(timezone.utc) values with "can't subtract offset-naive
+    # and offset-aware datetimes". Saw this on first cost_ledger INSERT
+    # against Supabase Postgres.
+    occurred_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
 
 class SelectorHistoryRow(Base):
@@ -72,7 +77,7 @@ class SelectorHistoryRow(Base):
     semantic_name = Column(String(255), nullable=True)
     success_count = Column(Integer, nullable=False, default=1)
     failure_count = Column(Integer, nullable=False, default=0)
-    last_used_at = Column(DateTime, nullable=False, index=True)
+    last_used_at = Column(DateTime(timezone=True), nullable=False, index=True)
 
 
 _engine = None
