@@ -85,7 +85,20 @@ infra/                   Dockerfile, railway.json, zeabur.json, Procfile,
 | Wall-time (p50) | ~5 s per filing |
 | Total eval wall-time | **~35 s** for all 20 (parallel @ 4) |
 
-Both tasks' numbers are queried directly from `task{1,2}_browser_agent/eval/report.json` and the `cost_ledger` table — no estimation.
+> ⚠️ **These are curated-eval numbers and do not generalize.** The 20 cases were selected for industry diversity *and the heading thresholds / calibration were tuned against them*. On a 25-ticker real-world sweep of untuned large-cap filers, mean confidence drops to **0.526** and only **68 %** keep all four substance items intact. See the row below.
+
+**Task 2 — Real-world sweep** (25 untuned large-cap tickers, fetched live from EDGAR — [full writeup](docs/analysis/real_world_sweep.md))
+
+| Metric | Value |
+|---|---|
+| Pipeline ran end-to-end (no error) | **25 / 25 (100%)** — never crashes, never returns zero items |
+| Core-4 substance items intact (1 / 1A / 7 / 8) | **17 / 25 (68%)** — vs ~95% on the curated set |
+| Mean overall confidence | **0.526** (median 0.509) — vs 0.896 curated; calibration does not transfer |
+| Quarantine rate | **0 / 25** — threshold (0.45) sits below the real ~0.50 cluster, so it caught **none** of the real failures, incl. Citi with its MD&A missing. This is a known mis-calibration, not a clean bill of health. |
+| Most common failure | **Item 8 (Financial Statements), 6/25** — anchor lands on a cross-reference, not the statements |
+| Cost per filing (median / max) | **$0.024 / $0.060** — real filings trigger L3; only 1/25 stayed on the free L1+L2 path |
+
+Both tasks' curated numbers are queried directly from `task{1,2}_browser_agent/eval/report.json` and the `cost_ledger` table — no estimation. The real-world sweep numbers come from [`tools/sweep_random_tickers.py`](tools/sweep_random_tickers.py) over a live EDGAR pull.
 
 ---
 
@@ -109,7 +122,7 @@ Both tasks' numbers are queried directly from `task{1,2}_browser_agent/eval/repo
 |---|---|---|
 | **Free-text input parser** — accepts any English / Chinese natural-language input (`"Apple 2024"`, `"微軟 年報"`, ticker, URL) | [api/router.py edgar_parse](task2_10k_extractor/api/router.py), [prompts/task2_10k/input_parser.md](prompts/task2_10k/input_parser.md) | Reviewers don't want to hand-craft EDGAR archive URLs. CHEAP-tier LLM (~$0.0001) interprets intent + emits typed `url` / `ticker_query` / `unsupported` / `refuse`. Foreign-filer 20-F → typed refusal; nonsense input → typed refusal. |
 | **Full SEC ticker registry** (10,365 tickers) as fallback | [eval/edgar_lookup.py](task2_10k_extractor/eval/edgar_lookup.py) | KNOWN_CIKS only had 14 hand-curated tickers. Now any US-listed filer resolves automatically via SEC's public `company_tickers.json`. |
-| Layered fallback: **L1** anchor → **L2** structural → **L3** LLM self-consistency → quarantine | [pipeline/orchestrator.py](task2_10k_extractor/pipeline/orchestrator.py) | A single LLM-everything pipeline costs ~$0.10–$0.50 per filing. Layered fallback costs $0 on ~95% of inputs. See [ADR-002](docs/adr/ADR-002-layered-extraction-pipeline.md). |
+| Layered fallback: **L1** anchor → **L2** structural → **L3** LLM self-consistency → quarantine | [pipeline/orchestrator.py](task2_10k_extractor/pipeline/orchestrator.py) | A single LLM-everything pipeline costs ~$0.10–$0.50 per filing. Layered fallback costs $0 on the curated set and a real-world median of **$0.024** (L3 fires on most real filings; see [sweep](docs/analysis/real_world_sweep.md)) — still ~5–20× cheaper than LLM-everything. See [ADR-002](docs/adr/ADR-002-layered-extraction-pipeline.md). |
 | **L1** anchor extractor: regex + density-based TOC + first-with-gap section heuristic | [pipeline/l1_anchor.py](task2_10k_extractor/pipeline/l1_anchor.py) | Most filings have proper heading anchors; we capture them deterministically. |
 | **L2** structural extractor: TOC `<a href="#item7a">` → `<a name="item7a">` reverse-lookup | [pipeline/l2_structural.py](task2_10k_extractor/pipeline/l2_structural.py) | When L1 misses a heading (visual styling not in our tag set), the TOC link almost always points at the right anchor. |
 | **L3** LLM self-consistency: two independent prompts per suspect item + boundary IoU + arbitration | [pipeline/l3_llm.py](task2_10k_extractor/pipeline/l3_llm.py) | Without a public ground truth, the only honest self-validation is two independent extractions agreeing. See [ADR-004](docs/adr/ADR-004-self-consistency-validation.md). |

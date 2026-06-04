@@ -197,6 +197,41 @@ pipeline automatically picks it up on next run.
 
 ---
 
+## 5.5 Curated eval ≠ production
+
+All numbers above (95 % pass, mean confidence 0.896) are from the 20-case
+curated eval. That set was chosen for industry diversity **and the heading
+thresholds, gap-based picker, and Platt calibration were tuned against it.**
+After interviewer feedback (2026-06-04) that pasting INTC and Citi produced
+failures the curated number didn't predict, we ran a 25-ticker real-world
+sweep of untuned large-cap filers ([`tools/sweep_random_tickers.py`](../../tools/sweep_random_tickers.py),
+full writeup [`real_world_sweep.md`](real_world_sweep.md)). What real users get:
+
+| | Curated (20) | Real sweep (25) |
+|---|---|---|
+| Pipeline ran, no error | 20/20 | **25/25** |
+| Core-4 substance items intact (1/1A/7/8) | ~95 % | **68 %** |
+| Mean confidence | 0.896 | **0.526** (median 0.509) |
+| Quarantine rate | — | **0/25** |
+| Cost/filing median | $0.00 | **$0.024** |
+
+Three honest conclusions, in priority order:
+
+1. **The confidence model does not transfer.** It was fit on the curated
+   spread (0.3–0.95); on real filings it collapses to a ~0.51 cluster
+   regardless of extraction quality. The dashboard score is not trustworthy
+   out-of-distribution — precisely where it would matter most.
+2. **Quarantine therefore catches nothing in production.** Threshold 0.45
+   sits just under the real cluster, so 0/25 were flagged — **including Citi,
+   whose entire MD&A (Item 7) is missing.** The safety net needs re-fitting,
+   or a hard structural gate (quarantine if any of Items 1/1A/7/8 is
+   missing/below-floor, independent of the learned score). This supersedes
+   the optimistic framing in §5.3.
+3. **What does hold up:** the system never crashed and never returned zero
+   items across 25 untuned filers. The real failure mode is *quiet partial
+   truncation* — most often Item 8 (Financial Statements, 6/25), where the
+   anchor lands on a cross-reference instead of the statements.
+
 ## 6. Open issues honestly listed
 
 1. **Confidence is uncalibrated.** Until a labelled dev set exists,

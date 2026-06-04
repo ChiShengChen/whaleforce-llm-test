@@ -341,6 +341,22 @@ async def capabilities() -> dict[str, object]:
                 "system_response": "Quarantined with `required item '8' missing` reason. System refuses to fabricate content rather than hallucinating",
                 "fix_direction": "L3 LLM probe could detect the reference pattern and emit a structured 'incorporated by reference' marker rather than just missing",
             },
+            {
+                "label": "Citigroup (C) FY2025 10-K",
+                "url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=831001&type=10-K",
+                "issue": "Item 7 (MD&A) entirely missing; Item 1 (Business) truncated. 19/23 items, coverage 0.81",
+                "root_cause": "Citi's MD&A is not introduced by any 'Management's Discussion and Analysis' or 'Item 7.' heading string our detector recognises, so L1 has no anchor to land on",
+                "system_response": "NOT quarantined (confidence 0.48 > 0.45 threshold). This is a defect: a user gets a confident-looking result with no MD&A and no warning. Surfaced in the real-world sweep, not the curated eval",
+                "fix_direction": "Hard structural gate — quarantine if any of Items 1/1A/7/8 is missing/below-floor regardless of learned score; plus an LLM text-scan fallback for items with zero anchors",
+            },
+            {
+                "label": "Intel (INTC) FY2025 10-K",
+                "url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=50863&type=10-K",
+                "issue": "Items 1 (Business) and 8 (Financial Statements) truncated below floor",
+                "root_cause": "Intel labels its Item 1 body 'Our Business' (non-canonical) and its TOC sits at the very end of the document; the gap-based picker recovered Items 1A/7 (a fix shipped 2026-06-04) but Items 1 + 8 still mis-bound",
+                "system_response": "NOT quarantined (confidence 0.50). Partial quiet truncation — same mis-calibration gap as Citi",
+                "fix_direction": "Expand canonical-title list + structural quarantine gate (see real_world_sweep.md)",
+            },
         ],
         "format_categories": {
             "supported": [
