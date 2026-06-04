@@ -92,11 +92,12 @@ infra/                   Dockerfile, railway.json, zeabur.json, Procfile,
 | Metric | Value |
 |---|---|
 | Pipeline ran end-to-end (no error) | **25 / 25 (100%)** — never crashes, never returns zero items |
-| Core-4 substance items intact (1 / 1A / 7 / 8) | **17 / 25 (68%)** — vs ~95% on the curated set |
+| Core-4 substance items extracted (1 / 1A / 7 / 8) | **17 / 25 (68%)** under their own heading; +2 (NVDA/NFLX) are legitimate Item 8 → Item 15 incorporation, leaving **8 genuinely broken** — vs ~95% on the curated set |
 | Mean overall confidence | **0.526** (median 0.509) — vs 0.896 curated; calibration does not transfer |
-| Quarantine rate | **0 / 25** — threshold (0.45) sits below the real ~0.50 cluster, so it caught **none** of the real failures, incl. Citi with its MD&A missing. This is a known mis-calibration, not a clean bill of health. |
-| Most common failure | **Item 8 (Financial Statements), 6/25** — anchor lands on a cross-reference, not the statements |
-| Cost per filing (median / max) | **$0.024 / $0.060** — real filings trigger L3; only 1/25 stayed on the free L1+L2 path |
+| Quarantine rate | **8 / 25 (32%)** after the reliability fix ([ADR-007](docs/adr/ADR-007-structural-quarantine-gate.md)) — a hard structural gate flags every filing missing/truncating a core item (1/1A/7/8). **8/8 real failures caught, 0/17 false positives**, incl. Citi with its MD&A missing (was a silent pass before the fix). |
+| Most common real failure | **Item 7 (MD&A), 5/8** — anchor mis-bounded or no recognisable heading |
+| Incorporation handled | NVDA/NFLX Item 8 → Item 15 correctly classified as incorporation-by-reference, not failures (only when the statements are verifiably captured) |
+| Cost per filing (median / max) | **$0.024 / $0.063** — real filings trigger L3; the structural gate itself adds zero LLM cost |
 
 Both tasks' curated numbers are queried directly from `task{1,2}_browser_agent/eval/report.json` and the `cost_ledger` table — no estimation. The real-world sweep numbers come from [`tools/sweep_random_tickers.py`](tools/sweep_random_tickers.py) over a live EDGAR pull.
 

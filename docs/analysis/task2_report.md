@@ -207,30 +207,36 @@ failures the curated number didn't predict, we ran a 25-ticker real-world
 sweep of untuned large-cap filers ([`tools/sweep_random_tickers.py`](../../tools/sweep_random_tickers.py),
 full writeup [`real_world_sweep.md`](real_world_sweep.md)). What real users get:
 
-| | Curated (20) | Real sweep (25) |
-|---|---|---|
-| Pipeline ran, no error | 20/20 | **25/25** |
-| Core-4 substance items intact (1/1A/7/8) | ~95 % | **68 %** |
-| Mean confidence | 0.896 | **0.526** (median 0.509) |
-| Quarantine rate | — | **0/25** |
-| Cost/filing median | $0.00 | **$0.024** |
+| | Curated (20) | Real sweep (25) | After fix (ADR-007) |
+|---|---|---|---|
+| Pipeline ran, no error | 20/20 | **25/25** | 25/25 |
+| Core-4 substance items extracted (1/1A/7/8) | ~95 % | **68 %** | 68 % (unchanged — extraction itself not improved) |
+| Mean confidence | 0.896 | **0.526** | 0.525 (score not the gate any more) |
+| Quarantine rate | — | **0/25** | **8/25** — 8/8 real failures caught, 0 false positives |
+| Cost/filing median | $0.00 | **$0.024** | $0.024 (gate adds zero LLM cost) |
 
 Three honest conclusions, in priority order:
 
 1. **The confidence model does not transfer.** It was fit on the curated
    spread (0.3–0.95); on real filings it collapses to a ~0.51 cluster
    regardless of extraction quality. The dashboard score is not trustworthy
-   out-of-distribution — precisely where it would matter most.
-2. **Quarantine therefore catches nothing in production.** Threshold 0.45
-   sits just under the real cluster, so 0/25 were flagged — **including Citi,
-   whose entire MD&A (Item 7) is missing.** The safety net needs re-fitting,
-   or a hard structural gate (quarantine if any of Items 1/1A/7/8 is
-   missing/below-floor, independent of the learned score). This supersedes
-   the optimistic framing in §5.3.
-3. **What does hold up:** the system never crashed and never returned zero
-   items across 25 untuned filers. The real failure mode is *quiet partial
-   truncation* — most often Item 8 (Financial Statements, 6/25), where the
-   anchor lands on a cross-reference instead of the statements.
+   out-of-distribution — so it is no longer the operative quarantine signal.
+2. **Quarantine caught nothing in production — now fixed ([ADR-007](../adr/ADR-007-structural-quarantine-gate.md)).**
+   The score-only threshold (0.45) sat just under the real cluster, so 0/25
+   were flagged — **including Citi, whose entire MD&A (Item 7) is missing.**
+   The fix is a **hard structural gate**: any of Items 1/1A/7/8 missing or
+   below floor quarantines regardless of the learned score, with
+   incorporation-by-reference (Part III → proxy, Item 8 → Item 15) detected so
+   legitimately-short items are not false-flagged. Re-running the same sweep:
+   **8/25 quarantined — all 8 genuinely broken, 0 of the 17 clean filers
+   wrongly flagged.** This supersedes §5.3.
+3. **What holds up:** the system never crashed and never returned zero items
+   across 25 untuned filers — and now never *silently* returns a broken one
+   either. The remaining limit is raw extraction on heading-detection-collapse
+   filings (Citi/INTC): still not extractable, but now reliably refused. The
+   distinction between a real failure and legitimate incorporation by reference
+   (NVDA/NFLX Item 8 → Item 15) is made by checking the financial statements
+   are *actually captured*, not by length alone.
 
 ## 6. Open issues honestly listed
 

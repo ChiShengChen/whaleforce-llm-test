@@ -64,20 +64,61 @@ The harness's own `pass_rate` field reads **0/25** — but that metric is mis-sp
 
 ## Failure mode breakdown
 
-8/25 filers lost at least one core substance item (1 / 1A / 7 / 8):
+Diagnosing each short/missing core item (1 / 1A / 7 / 8) by hand split them into
+two categories — **real extraction failures** vs **legitimate incorporation by
+reference** — which the original `<500 char` metric could not tell apart:
 
-| Filer | Core failure | Industry / note |
+| Filer | Core item short/missing | Verdict |
 |---|---|---|
-| NVDA | Item 8 short (<500) | Item 8 anchor lands on the cross-reference line, not the financial statements |
-| INTC | Items 1 + 8 short | known regression — non-canonical section labels ("Our Business") |
-| C (Citi) | **Item 7 MISSING** + Item 1 short, coverage 0.81 | known regression — no "Management's Discussion" heading string anywhere |
-| JPM | Item 8 short | bank — never tuned for |
-| WFC | Items 1A + 7 + 8 short | bank — worst real-world case after Citi; 3 core items truncated |
-| PFE | Item 7 short | pharma |
-| DIS | Item 8 short | media |
-| NFLX | Item 8 short | media |
+| C (Citi) | **Item 7 MISSING** + Item 1 (81 chars) | **Real failure** — no "Management's Discussion" heading anywhere; heading-detection collapse (only ~3 body headings found) |
+| INTC | Item 1 (221) + Item 8 (73) | **Real failure** — non-canonical "Our Business" label; TOC at end of doc |
+| WFC | Items 1A + 7 + 8 | **Real failure** — bank; 3 core items truncated, worst case after Citi |
+| JPM | Item 7 (1147) + Item 8 (59) | **Real failure** — bank; MD&A + financials truncated |
+| XOM | Item 7 (1572) | **Real failure** — MD&A mis-bounded |
+| CVX | Item 7 (872) | **Real failure** — MD&A mis-bounded |
+| PFE | Item 7 + Item 8 | **Real failure** — pharma |
+| DIS | Item 8 (58) | **Real failure** — financials not captured anywhere in output |
+| NVDA | Item 8 (58) | **Not a bug** — financials present under Item 15 (verified by "Consolidated Balance Sheets" markers); Item 8 legitimately points there |
+| NFLX | Item 8 (58) | **Not a bug** — same as NVDA; financials captured under Item 15 |
 
-**Item 8 (Financial Statements) is the single most common failure: 6/25.** The Item 8 anchor frequently lands on a one-line pointer ("The financial statements … are filed as part of this report, see Item 15") rather than the statements themselves, which live under a different heading or in an exhibit. This is a systematic boundary bug, not a per-filer quirk, and was not visible in the curated eval.
+So of the apparent "8/25 Item-8 failures", **2 (NVDA, NFLX) are correct
+incorporation by reference, not truncation.** The genuinely-broken set is **8
+filers** (Citi, INTC, WFC, JPM, XOM, CVX, PFE, DIS), and the dominant real
+failure mode is **Item 7 (MD&A) — 5/8** followed by Item 8 financials. This
+distinction is the whole reason the reliability fix below tracks *content
+actually captured*, not just length.
+
+## Reliability fix shipped (2026-06-04) — [ADR-007](../adr/ADR-007-structural-quarantine-gate.md)
+
+The diagnosis above drove a fix. The problem was never that the pipeline
+crashed — it was that it **silently returned broken extractions** because the
+learned confidence score (~0.50 on every real filing) could not tell a good
+extraction from one missing its MD&A. Re-running the identical sweep after the
+fix:
+
+| | Before (score-only gate) | After (structural gate) |
+|---|---|---|
+| Quarantine rate | **0/25** | **8/25 (32%)** |
+| Real failures flagged | **0 / 8** | **8 / 8** |
+| False quarantines (clean filing wrongly flagged) | — | **0 / 17** |
+| Citi (MD&A missing) | silent pass | **quarantined**, reason `core item 7 (MD&A) missing` |
+| NVDA / NFLX (Item 8 → Item 15) | counted as failures | **correctly passed** as incorporation by reference |
+
+What changed (all deterministic, zero added LLM cost on the gate itself):
+
+1. **Hard structural gate** ([`confidence.core_item_gate`](../../task2_10k_extractor/pipeline/confidence.py)) — any of Items 1/1A/7/8 missing or below its length floor quarantines the filing **regardless of the learned score**. The score is kept only as a lower floor. The 8 quarantined filers are exactly the 8 genuinely-broken ones; all 17 clean filers pass — zero false positives.
+2. **Incorporation-by-reference labelling** ([`pipeline/recover.py`](../../task2_10k_extractor/pipeline/recover.py)) — Part III → proxy, and Item 8 → Item 15, are marked legitimately-short so the gate does not false-flag them. Critically, **Item 8 is only accepted as incorporated when the financial statements are actually captured somewhere in our output** (verified by content markers), so the label can never hide a real failure — that is what separates NVDA/NFLX (pass) from DIS (quarantine), all three with a 58-char Item 8.
+3. **Deterministic gap-fill** for core items cleanly bracketed by trustworthy neighbours; refuses when the structure is unsound.
+4. **L3 JSON salvage** ([`llm_gateway._coerce_json`](../../shared/llm_gateway.py)) — prompt B output truncated by `max_tokens` was previously discarded wholesale ("Unterminated string"); it is now repaired to recover the items extracted before the cutoff.
+
+**What the fix does NOT do:** it does not improve raw extraction on the
+heading-detection-collapse cases (Citi, INTC). Those filings still cannot be
+fully extracted — but they are now **reliably refused** instead of silently
+mis-returned. Fixing the extraction itself is a normalize-layer rework, tracked
+as future work. The reliability property — *never silently return a 10-K with a
+missing or garbled substance section* — is delivered.
+
+Locked in by [`task2_10k_extractor/tests/test_recovery_gate.py`](../../task2_10k_extractor/tests/test_recovery_gate.py) (15 cases).
 
 ## Known failure modes (post-fix)
 
@@ -85,19 +126,20 @@ The harness's own `pass_rate` field reads **0/25** — but that metric is mis-sp
 
 2. **TOC at the back of the document** — INTC's TOC is at chars 571K of a 575K document; the new gap-based picker handles this correctly for items with body anchors elsewhere, but items whose ONLY anchor is in the back-TOC degenerate to "1 line of TOC text."
 
-3. **Items 10-14 (Part III) incorporated by reference** — these are SUPPOSED to be 1-2 line cross-references to a forthcoming proxy statement. The 500-char "pass" threshold here counts those as failures. In reality they are not bugs.
+3. **Items 10-14 (Part III) incorporated by reference** — these are SUPPOSED to be 1-2 line cross-references to a forthcoming proxy statement, not bugs. **Now handled:** [`recover.py`](../../task2_10k_extractor/pipeline/recover.py) detects the cover-page proxy note and flags these `incorporated_by_reference`, so they no longer count against confidence or the gate.
 
 ## Honest takeaways
 
 - **The curated 95 % eval does not generalize.** On 25 untuned filers the substance-extraction rate (core-4 intact) is **68 %**, and mean confidence drops from 0.896 to **0.526**. The curated set was selected for — and the heading thresholds tuned against — filings the system handles cleanly. Real samples include filing styles the system was never fit to.
 - **Confidence calibration does not transfer.** The Platt model was fit on the curated set (where scores spread 0.3–0.95). On real filings the score collapses to a ~0.51 cluster (median 0.509, 24/25 below 0.55) almost regardless of whether extraction succeeded. The number on the dashboard is therefore not trustworthy on out-of-distribution filers, which is exactly where a confidence signal would be most valuable.
-- **Quarantine did NOT fire on the real failures — this is a defect, not a feature.** `QUARANTINE_THRESHOLD` is 0.45 ([`confidence.py:141`](../../task2_10k_extractor/pipeline/confidence.py#L141)); the real-world confidence cluster sits *just above* it at ~0.50, so **0/25 were quarantined — including Citi, which is missing its entire MD&A (Item 7)**. A user pasting Citi gets a confident-looking result with no MD&A and no warning. The earlier claim that "quarantine catches filings we can't extract" was true only on the curated distribution. **The honest position: the safety net is mis-calibrated for production and would need re-fitting (or a hard structural gate — e.g. quarantine if any of Items 1/1A/7/8 is missing or below floor, independent of the learned score) before it could be trusted.**
-- **Section boundaries are the dominant failure mode**, exactly as the interviewer noted — especially Item 8 (6/25) and Item 7. Multiple filers have section openers, or financial-statement headings, that our detector misses.
+- **Quarantine did NOT fire on the real failures (now FIXED — [ADR-007](../adr/ADR-007-structural-quarantine-gate.md)).** The score-only gate at `QUARANTINE_THRESHOLD = 0.45` let the real-world ~0.50 cluster through, so **0/25 were quarantined — including Citi with its entire MD&A (Item 7) missing.** The fix replaced reliance on the mis-calibrated score with a **hard structural gate**: any of Items 1/1A/7/8 missing or below floor quarantines regardless of score. Result on the same sweep: **8/8 real failures now flagged, 0/17 false positives.** A user pasting Citi now gets `core item 7 (MD&A) missing`, not silent garbage. The learned score is retained only as a lower floor; re-fitting it on out-of-distribution data remains future work but is no longer load-bearing for safety.
+- **Section boundaries are the dominant failure mode**, exactly as the interviewer noted — once the legitimate incorporation cases (NVDA, NFLX) are excluded, the real failures concentrate on **Item 7 (MD&A, 5/8)** and Item 8 financials. Multiple filers have section openers, or financial-statement headings, that our detector misses.
 - **The system is robust against crashing and against silent-nothing.** 25/25 resolved a ticker, fetched a live 10-K, and returned a populated item set. It never threw and never returned zero items. The failure mode is *quiet partial truncation*, not a crash — which is harder to detect and the reason the quarantine gap above matters.
 - **Cost is low but not $0.** Real median is **$0.024/filing** (only 1/25 stayed on the free L1+L2 path; the rest triggered L3 self-consistency), max $0.060. The README's "median $0.00" is a curated-set artifact.
 
 ## What this changes in the docs
 
-- README "Top-line numbers" table now includes a "Real-world sweep" row alongside the curated eval row.
-- Capability matrix on `/dashboard` now lists INTC and Citi explicitly under "Known failure modes" with the specific item IDs that fail.
-- `task2_report.md` adds a section labeled "Curated eval ≠ production".
+- README "Top-line numbers" table includes a "Real-world sweep" row alongside the curated eval row, plus the post-fix quarantine numbers.
+- Capability matrix on `/dashboard` lists INTC and Citi under "Known failure modes" with the specific item IDs that fail and notes they are now quarantined (not silent).
+- `task2_report.md` §5.5 "Curated eval ≠ production" carries the before/after reliability numbers.
+- [ADR-007](../adr/ADR-007-structural-quarantine-gate.md) records the structural-gate decision.
