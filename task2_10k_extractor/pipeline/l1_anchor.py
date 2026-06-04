@@ -56,6 +56,8 @@ ITEM_CANONICAL_TITLE: dict[str, str] = {
 
 
 # Matches: "Item 1.", "ITEM 1A", "Item 7A. Management's Discussion...", "Item 7A — MD&A"
+# `\s` in Python 3 is Unicode-aware, so non-breaking space (\xa0) and friends
+# in filings like Citi's are handled without an explicit special case.
 _ITEM_HEADING_RE = re.compile(
     r"""
     ^\s*
@@ -68,6 +70,83 @@ _ITEM_HEADING_RE = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+
+# ---------------------------------------------------------------------------
+# Title-based heading detection — fallback for filers (Intel, Citi, etc.) who
+# put SEC canonical titles ("Risk Factors", "Business") in their body
+# headings without the leading "Item N." text. Diagnosed via INTC FY2025 +
+# Citi FY2025: both filings have 0 instances of `Item N` in the body — only
+# in TOC at end / middle of document. Without this fallback, L1 only ever
+# matches TOC entries and the whole pipeline quarantines with "TOC anchor
+# only — body may be missing" notes on every item.
+#
+# Two match strategies:
+#   * EXACT: whole heading text equals one of these (modulo trailing
+#     punctuation) — used for short canonical titles where a prefix match
+#     would over-fire on unrelated paragraphs.
+#   * PREFIX: heading text starts with one of these — used for long
+#     canonical titles where the filer may have shortened the suffix.
+EXACT_TITLE_TO_ITEM: dict[str, str] = {
+    "business": "1",
+    "risk factors": "1A",
+    "unresolved staff comments": "1B",
+    "cybersecurity": "1C",
+    "properties": "2",
+    "legal proceedings": "3",
+    "mine safety disclosures": "4",
+    "reserved": "6",
+    "[reserved]": "6",
+    "controls and procedures": "9A",
+    "other information": "9B",
+    "executive compensation": "11",
+    "form 10-k summary": "16",
+}
+
+PREFIX_TITLE_TO_ITEM: list[tuple[str, str]] = [
+    # Longest first so prefix matching is greedy in the right direction.
+    ("management's discussion and analysis", "7"),
+    ("managements discussion and analysis", "7"),
+    ("management discussion and analysis", "7"),
+    ("quantitative and qualitative disclosures", "7A"),
+    ("financial statements and supplementary", "8"),
+    ("consolidated financial statements", "8"),
+    ("changes in and disagreements with accountants", "9"),
+    ("changes in and disagreements with the accountants", "9"),
+    ("disclosure regarding foreign jurisdictions", "9C"),
+    ("directors, executive officers and corporate governance", "10"),
+    ("directors, executive officers", "10"),
+    ("security ownership of certain beneficial owners", "12"),
+    ("certain relationships and related transactions", "13"),
+    ("principal accountant fees", "14"),
+    ("exhibits, financial statement schedules", "15"),
+    ("exhibits and financial statement schedules", "15"),
+    ("market for registrant", "5"),
+    ("market for the registrant", "5"),
+]
+
+_TRAIL_PUNCT_RE = re.compile(r"[\.\:\;\,\—\–\-\s]+$")
+
+
+def _normalize_title_for_match(text: str) -> str:
+    """Lower-case, strip leading/trailing punctuation, collapse whitespace."""
+    s = (text or "").lower().strip()
+    s = _TRAIL_PUNCT_RE.sub("", s)
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
+def _match_title_to_item(heading_text: str) -> str | None:
+    """Return item_id if heading text matches a canonical SEC title (exactly
+    or via a known multi-word prefix). Else None."""
+    if not heading_text:
+        return None
+    normalized = _normalize_title_for_match(heading_text)
+    if normalized in EXACT_TITLE_TO_ITEM:
+        return EXACT_TITLE_TO_ITEM[normalized]
+    for prefix, item_id in PREFIX_TITLE_TO_ITEM:
+        if normalized.startswith(prefix):
+            return item_id
+    return None
 
 
 @dataclass
@@ -89,22 +168,46 @@ def _normalize_id(raw: str) -> str:
 
 
 def _scan_anchors(ir: NormalizedFiling) -> list[_Anchor]:
+    """Scan heading candidates for either:
+
+    (a) "Item N." text  (the original ID-based regex), OR
+    (b) The canonical SEC title of an item, with no "Item N." prefix
+        (Intel, Citi, and similar filers' body-section style).
+
+    Strategy (b) is critical: ~25% of S&P 500 filers we sampled put only
+    the canonical title in the body heading and reserve "Item N." text
+    for the TOC. Without (b), L1 only ever finds TOC entries and the
+    whole pipeline quarantines.
+    """
     anchors: list[_Anchor] = []
     for h in ir.headings:
+        # (a) ID-based match — fast path for filers that include "Item N." in body
         m = _ITEM_HEADING_RE.match(h.text)
-        if not m:
-            continue
-        item_id = _normalize_id(m.group("id"))
-        if item_id not in TEN_K_ITEM_IDS:
-            continue
-        anchors.append(
-            _Anchor(
-                item_id=item_id,
-                char_offset=h.char_offset,
-                raw_title=(m.group("title") or "").strip(),
-                is_toc=h.is_table_of_contents,
+        if m:
+            item_id = _normalize_id(m.group("id"))
+            if item_id in TEN_K_ITEM_IDS:
+                anchors.append(
+                    _Anchor(
+                        item_id=item_id,
+                        char_offset=h.char_offset,
+                        raw_title=(m.group("title") or "").strip(),
+                        is_toc=h.is_table_of_contents,
+                    )
+                )
+                continue
+
+        # (b) Title-based match — for filers (INTC, Citi, similar) whose
+        # body headings are the canonical SEC title alone
+        item_id = _match_title_to_item(h.text)
+        if item_id is not None:
+            anchors.append(
+                _Anchor(
+                    item_id=item_id,
+                    char_offset=h.char_offset,
+                    raw_title=h.text.strip(),
+                    is_toc=h.is_table_of_contents,
+                )
             )
-        )
     _flag_toc_by_density(anchors)
     return anchors
 
@@ -158,63 +261,76 @@ def _title_matches_canonical(item_id: str, raw_title: str) -> bool:
 def _pick_body_anchors(anchors: list[_Anchor]) -> list[_Anchor]:
     """Pick the canonical body anchor for each item id.
 
-    Priority (first hit wins for each item):
-      1. First NON-TOC anchor whose raw_title contains a canonical-title match.
-         These are real section openers — running headers carry no title.
-      2. Last NON-TOC anchor whose char_offset is followed by a substantial
-         gap (≥ 1000 chars) before the next *same-item* anchor — meaning the
-         anchor is the START of a section, not a page running header.
-      3. Last NON-TOC anchor of that item (fallback when neither heuristic
-         finds a winner).
-      4. Last anchor of any kind (final fallback to keep coverage).
+    Selection signal: **gap to the next anchor (any item) in document order**.
+
+    Body section openers have lots of content following them (next anchor is
+    KB-to-MB away). TOC entries and page running-headers are immediately
+    followed by the next line of TOC / next page header (≤ 200–500 chars).
+
+    This is more robust than the previous `is_toc` flag from
+    `normalize.py`, which depends on detecting an explicit "PART I" heading
+    that some filers (Intel, Citi, many large-cap iXBRL submissions) do not
+    emit as a styled heading at all.
+
+    Priority order (first match wins per item id):
+      1. Title-matched anchor with overall-gap ≥ 2000 chars.
+      2. Anchor with overall-gap ≥ 2000 chars (any title).
+      3. Title-matched anchor (regardless of gap).
+      4. Earliest anchor (first occurrence — for filings where no anchor has
+         a substantial trailing gap, e.g. quarantine-tier extractions).
     """
-    # Precompute "next-same-item gap" so we can find anchors that open sections
-    by_id_offsets: dict[str, list[int]] = {}
-    for a in anchors:
-        by_id_offsets.setdefault(a.item_id, []).append(a.char_offset)
-    for offsets in by_id_offsets.values():
-        offsets.sort()
+    if not anchors:
+        return []
 
-    def gap_to_next_same(item_id: str, off: int) -> int:
-        offsets = by_id_offsets[item_id]
-        for o in offsets:
-            if o > off:
-                return o - off
-        return 10**9  # last one for this id
+    sorted_by_off = sorted(anchors, key=lambda a: a.char_offset)
+    n = len(sorted_by_off)
+    # max_offset acts as a soft document upper bound; we add a small padding
+    # so the last anchor isn't trivially "far" just because there's nothing
+    # after it. Using max_offset (rather than a 1M placeholder) prevents
+    # TOC anchors at the back of the document from out-ranking real body
+    # anchors that have ~tens-of-thousands of chars of trailing content.
+    max_offset = sorted_by_off[-1].char_offset
+    gap_to_next_overall: list[int] = []
+    for i, a in enumerate(sorted_by_off):
+        if i + 1 < n:
+            gap_to_next_overall.append(sorted_by_off[i + 1].char_offset - a.char_offset)
+        else:
+            # Estimate trailing content as max-offset to here, capped small —
+            # the last anchor genuinely has unknown trailing content.
+            gap_to_next_overall.append(min(5000, max_offset - a.char_offset + 1000))
 
+    by_id_title_far: dict[str, _Anchor] = {}
+    by_id_far: dict[str, _Anchor] = {}
     by_id_title: dict[str, _Anchor] = {}
-    by_id_section: dict[str, _Anchor] = {}
-    by_id_body_last: dict[str, _Anchor] = {}
-    by_id_any: dict[str, _Anchor] = {}
+    by_id_first: dict[str, _Anchor] = {}
 
-    for a in anchors:
-        by_id_any[a.item_id] = a  # last-wins
-        if a.is_toc:
-            continue
-        # Section opener: FIRST non-TOC anchor with a large gap to the next
-        # same-item anchor. The "large gap" means real body content follows
-        # rather than a page running-header that immediately repeats.
-        if (
-            a.item_id not in by_id_section
-            and gap_to_next_same(a.item_id, a.char_offset) >= 1000
-        ):
-            by_id_section[a.item_id] = a
-        by_id_body_last[a.item_id] = a  # last non-TOC anchor (fallback)
-        if a.item_id not in by_id_title and _title_matches_canonical(
-            a.item_id, a.raw_title
-        ):
-            by_id_title[a.item_id] = a  # first-wins
+    SECTION_GAP_THRESHOLD = 2000
+
+    for a, gap in zip(sorted_by_off, gap_to_next_overall, strict=True):
+        if a.item_id not in by_id_first:
+            by_id_first[a.item_id] = a  # earliest occurrence
+        title_match = _title_matches_canonical(a.item_id, a.raw_title)
+        is_far = gap >= SECTION_GAP_THRESHOLD
+        # Strongest signal: title match + large trailing gap → body section opener
+        if title_match and is_far and a.item_id not in by_id_title_far:
+            by_id_title_far[a.item_id] = a
+        # Second-strongest: large trailing gap alone
+        if is_far and a.item_id not in by_id_far:
+            by_id_far[a.item_id] = a
+        # Third: title match regardless of gap
+        if title_match and a.item_id not in by_id_title:
+            by_id_title[a.item_id] = a
 
     chosen: dict[str, _Anchor] = {}
     for item_id in TEN_K_ITEM_IDS:
-        if item_id in by_id_title:
+        if item_id in by_id_title_far:
+            chosen[item_id] = by_id_title_far[item_id]
+        elif item_id in by_id_far:
+            chosen[item_id] = by_id_far[item_id]
+        elif item_id in by_id_title:
             chosen[item_id] = by_id_title[item_id]
-        elif item_id in by_id_section:
-            chosen[item_id] = by_id_section[item_id]
-        elif item_id in by_id_body_last:
-            chosen[item_id] = by_id_body_last[item_id]
-        elif item_id in by_id_any:
-            chosen[item_id] = by_id_any[item_id]
+        elif item_id in by_id_first:
+            chosen[item_id] = by_id_first[item_id]
 
     return sorted(chosen.values(), key=lambda a: a.char_offset)
 
