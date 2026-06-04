@@ -488,4 +488,22 @@ def _coerce_json(content: str) -> dict[str, Any]:
         end = s.rfind("}")
         if start >= 0 and end > start:
             s = s[start : end + 1]
-    return json.loads(s)
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        # Best-effort repair for output truncated by max_tokens (the common
+        # failure: an `items` array cut off mid-object → "Unterminated
+        # string"). Trim back to the last complete object and re-balance the
+        # open brackets. Imperfect if strings contain literal brackets, but it
+        # salvages the items extracted before the cutoff instead of losing all.
+        return _repair_truncated_json(s)
+
+
+def _repair_truncated_json(s: str) -> dict[str, Any]:
+    last = s.rfind("}")
+    if last == -1:
+        return json.loads(s)  # nothing to salvage — re-raise original-style error
+    candidate = s[: last + 1]
+    candidate += "]" * max(0, candidate.count("[") - candidate.count("]"))
+    candidate += "}" * max(0, candidate.count("{") - candidate.count("}"))
+    return json.loads(candidate)

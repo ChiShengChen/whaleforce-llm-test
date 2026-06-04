@@ -37,6 +37,54 @@ MIN_CHAR_LENGTH_HINTS = {
     "8": 2_000,
 }
 
+# The four substance items of a 10-K: Business, Risk Factors, MD&A, and
+# Financial Statements. If any of these is missing or truncated, the
+# extraction is not usable regardless of what the (out-of-distribution-
+# unreliable) learned confidence score says. The hard gate below enforces
+# this independently of the score — see `core_item_gate`.
+CORE_ITEMS = ("1", "1A", "7", "8")
+
+_CORE_TITLE = {
+    "1": "Business",
+    "1A": "Risk Factors",
+    "7": "MD&A",
+    "8": "Financial Statements",
+}
+
+
+def core_item_gate(items: list[ExtractedItem]) -> list[str]:
+    """Deterministic structural gate over the four substance items.
+
+    Returns a list of human-readable failure reasons (empty == pass). The
+    orchestrator force-quarantines on any reason here, regardless of the
+    learned confidence score. This exists because the real-world sweep
+    (docs/analysis/real_world_sweep.md) showed the learned score collapses to
+    a ~0.50 cluster on out-of-distribution filers and sits *just above* the
+    0.45 quarantine threshold — so it caught none of the real failures,
+    including Citi with its entire MD&A missing. A hard structural gate is
+    not fooled by a mis-calibrated score.
+
+    An item flagged `incorporated_by_reference` (e.g. Item 8 financials filed
+    under Item 15, Part III deferred to the proxy) is CORRECT to be short and
+    does not trip the gate.
+    """
+    by_id = {it.item_id: it for it in items}
+    reasons: list[str] = []
+    for iid in CORE_ITEMS:
+        it = by_id.get(iid)
+        title = _CORE_TITLE[iid]
+        if it is None:
+            reasons.append(f"core item {iid} ({title}) missing")
+            continue
+        if it.incorporated_by_reference:
+            continue
+        floor = MIN_CHAR_LENGTH_HINTS.get(iid, 1_000)
+        if it.char_length < floor:
+            reasons.append(
+                f"core item {iid} ({title}) truncated — {it.char_length} < {floor} chars"
+            )
+    return reasons
+
 
 def score_items(
     items: list[ExtractedItem], *, total_chars: int
@@ -85,6 +133,8 @@ def score_items(
     for it in items:
         if it.item_id in OPTIONAL_ITEMS:
             continue
+        if it.incorporated_by_reference:
+            continue  # legitimately short — content lives elsewhere
         floor = MIN_CHAR_LENGTH_HINTS.get(it.item_id, 0)
         if floor and it.char_length < floor:
             too_short += 1
@@ -108,7 +158,7 @@ def score_items(
         if it.notes and "empty content" in it.notes and not is_optional:
             c *= 0.1
         floor = MIN_CHAR_LENGTH_HINTS.get(it.item_id, 0)
-        if floor and it.char_length < floor and not is_optional:
+        if floor and it.char_length < floor and not is_optional and not it.incorporated_by_reference:
             c *= max(0.4, it.char_length / floor)
         # L2-recovered items get a small trust discount vs. L1 (no explicit
         # heading text, derived from anchor href only).

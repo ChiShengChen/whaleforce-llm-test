@@ -19,12 +19,14 @@ from shared.schemas import FilingExtraction, JobStatus
 from task2_10k_extractor.pipeline.confidence import (
     QUARANTINE_THRESHOLD,
     REQUIRED_ITEMS,
+    core_item_gate,
     score_items,
 )
 from task2_10k_extractor.pipeline.ingest import fetch_filing
 from task2_10k_extractor.pipeline.l1_anchor import extract_l1
 from task2_10k_extractor.pipeline.l2_structural import extract_l2
 from task2_10k_extractor.pipeline.l3_llm import maybe_extract_l3
+from task2_10k_extractor.pipeline.recover import recover_core_items
 from task2_10k_extractor.pipeline.calibration import apply_calibration
 from task2_10k_extractor.pipeline.normalize import normalize_html, persist_ir
 
@@ -85,6 +87,13 @@ async def run_pipeline(*, url: str, job_id: str | None = None) -> FilingExtracti
     if post_l2_overall < 0.6 or l1_required_coverage < 1.0:
         items = await maybe_extract_l3(trace_id=job_id, items=items, ir=ir)
 
+    # ----- RECOVERY (deterministic, zero-LLM) -------------------------------
+    # Label legitimate incorporation-by-reference (Part III → proxy, Item 8 →
+    # Item 15) and gap-fill core items that are cleanly bracketed by trusted
+    # neighbours. Makes the extraction both more correct and more honest
+    # before it hits the hard structural gate. See pipeline/recover.py.
+    items = recover_core_items(items, ir)
+
     # ----- SCORE + CALIBRATE + QUARANTINE -----------------------------------
     items, raw_overall, quarantine_reasons = score_items(items, total_chars=ir.char_total)
     overall, calibrated = apply_calibration(raw_overall)
@@ -94,8 +103,17 @@ async def run_pipeline(*, url: str, job_id: str | None = None) -> FilingExtracti
             it.confidence = round(apply_calibration(it.confidence)[0], 4)
     method_counts = Counter(it.extraction_method for it in items)
 
-    quarantined = overall < QUARANTINE_THRESHOLD or bool(
-        [r for r in quarantine_reasons if "no items" in r or "below 50%" in r]
+    # Hard structural gate: any missing/truncated core substance item
+    # quarantines regardless of the learned score. This is the primary
+    # reliability mechanism — the score alone missed every real failure in
+    # the sweep (see pipeline/confidence.core_item_gate).
+    core_gate_reasons = core_item_gate(items)
+    quarantine_reasons.extend(core_gate_reasons)
+
+    quarantined = (
+        overall < QUARANTINE_THRESHOLD
+        or bool(core_gate_reasons)
+        or bool([r for r in quarantine_reasons if "no items" in r or "below 50%" in r])
     )
     if not calibrated:
         # Surface honestly: until labels exist, we expose the raw score and

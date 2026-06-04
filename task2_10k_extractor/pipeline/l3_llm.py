@@ -139,7 +139,12 @@ async def extract_l3_for_item(
             tier=Tier.DEFAULT,
             system=sys_b,
             messages=[{"role": "user", "content": user_b}],
-            max_tokens=900,
+            # 900 was truncating prompt B's multi-item array mid-object
+            # ("Unterminated string"). The fix is the salvage path in
+            # llm_gateway._coerce_json (recovers items before the cutoff) — not
+            # simply raising the cap, which only trades latency for ~0 extra
+            # recovery (prompt B still disagrees on the hard items). See ADR-007.
+            max_tokens=1024,
             temperature=0.0,
             response_format="json",
             cache_system=True,

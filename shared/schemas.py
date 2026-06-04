@@ -188,6 +188,13 @@ class ExtractedItem(BaseModel):
     confidence: float                  # calibrated [0,1]
     extraction_method: Literal["L1", "L2", "L3"]
     notes: str | None = None
+    # True when the item's substantive content legitimately lives elsewhere
+    # (e.g. Item 8 financials incorporated by reference into Item 15, or
+    # Part III items deferred to the proxy statement). A short body for such
+    # an item is CORRECT, not a truncation, so the quarantine gate must not
+    # penalise it. Set by the recovery stage when an explicit reference phrase
+    # is detected near the item.
+    incorporated_by_reference: bool = False
     schema_version: Literal["1.0.0"] = "1.0.0"
 
 
