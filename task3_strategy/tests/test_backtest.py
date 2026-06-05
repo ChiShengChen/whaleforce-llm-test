@@ -98,6 +98,26 @@ def test_entry_aligned_benchmark_isolates_warmup_drag():
     assert abs(m.excess_vs_entry_pct) < 1.0
 
 
+def test_buy_and_hold_equals_benchmark_despite_day1_gap():
+    """buy_and_hold must ≈ benchmark even when day 1 gaps up (post-earnings):
+    both are anchored at the first actionable open, so the gap penalises
+    neither. Regression for the −6.48% artifact where the benchmark started at
+    the filing-date close but the strategy could only buy the next open."""
+    # day 0 close 100, then day 1 GAPS to open 110 (+10%), holds up
+    pts = [
+        PricePoint(date=date(2020, 1, 1), open=100, high=100, low=100, close=100, volume=1),
+        PricePoint(date=date(2020, 1, 2), open=110, high=112, low=109, close=111, volume=1),
+        PricePoint(date=date(2020, 1, 3), open=111, high=120, low=110, close=118, volume=1),
+        PricePoint(date=date(2020, 1, 4), open=118, high=125, low=117, close=123, volume=1),
+    ]
+    r = run_backtest(pts, StrategySpec(entry_signal="buy_and_hold"), start=pts[0].date,
+                     transaction_cost_bps=10.0)
+    # both anchored at opens[1]=110 → excess is just the round-trip cost, ~0
+    assert abs(r.metrics.excess_return_pct) < 0.5
+    # and the benchmark reflects the post-gap entry (110→123), not 100→123
+    assert r.metrics.benchmark_return_pct == pytest.approx((123 / 110 - 1) * 100, abs=0.1)
+
+
 def test_entry_aligned_benchmark_none_when_no_trades():
     prices = _series([100, 100, 100, 100, 130])
     spec = StrategySpec(entry_signal="momentum", momentum_lookback_days=1, momentum_threshold_pct=5.0)

@@ -13,11 +13,37 @@ Hard rules:
   knowledge of how the price moved after the filing date. Reason only from the
   fundamentals and the summary statistics given.
 - Pick exactly one `entry_signal` and one `exit_signal` from the menus below.
-- Choose conservative, round parameters. Prefer a risk overlay (stop loss) when the
-  Risk Factors (Item 1A) read as elevated.
 - Every claim in `thesis` must be traceable to an item; populate `citations` with
   short verbatim quotes from the provided excerpts.
 - Output STRICT JSON only — no prose, no markdown fences.
+
+STRATEGY SELECTION LOGIC — read this carefully, it is the core of the task:
+
+Your PRIMARY decision is **directional exposure driven by the fundamentals**; the
+technical signal is only *how* you express that view. Match the strategy to your
+read of the 10-K:
+
+- **Strong / improving fundamentals, manageable risk (stance = bullish):** choose
+  `entry_signal = "buy_and_hold"` with `exit_signal = "hold"` and `stop_loss_pct = 0`
+  (NO stop). A bullish view means you want to be invested from the start and to
+  TRACK the stock cleanly. DO NOT pick a lagging technical entry (sma_cross /
+  momentum) for a bullish thesis — its warm-up period sits in cash and forfeits early
+  gains for no reason. And do NOT bolt a tight stop onto a buy-and-hold thesis: an
+  8–25% stop gets whipsawed by ordinary drawdowns (sold at the bottom, re-bought
+  higher) and usually turns a market-matching hold into underperformance. Only add a
+  WIDE catastrophe stop (≥ 35%) if the filing flags genuine going-concern / solvency
+  risk in Item 1A or the MD&A.
+- **Mixed / uncertain outlook (stance = neutral):** use a trend filter to participate
+  only when price confirms — `sma_cross` (e.g. 50/200) or `momentum` — paired with a
+  `stop_loss_pct`. You accept lagging a melt-up in exchange for sidestepping a decline.
+- **Elevated risk factors / deteriorating MD&A (stance = cautious):** prioritise
+  capital preservation. Use `sma_cross` or `rsi_oversold` to accumulate only on
+  strength/weakness, ALWAYS with a `stop_loss_pct` (e.g. 8–12%). The goal here is to
+  LOSE LESS in a drawdown, not to outpace a rising market.
+
+Rule of thumb: if you are bullish, be invested (buy_and_hold); only introduce a
+technical entry when your fundamental read genuinely warrants waiting for price
+confirmation. Choose round, conservative parameters.
 
 entry_signal menu:
 - "buy_and_hold"   — enter once at the start of the window, hold. Use for a clean bullish fundamental thesis.

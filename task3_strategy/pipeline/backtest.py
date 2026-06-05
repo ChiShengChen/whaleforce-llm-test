@@ -141,7 +141,13 @@ def run_backtest(
     equity_curve: list[EquityPoint] = []
     days_in_market = 0
 
-    bench0 = closes[0]
+    # Benchmark obeys the SAME execution rule as strategies: it can only buy at
+    # the first actionable open (next bar after the filing date), not the
+    # filing-date close. Otherwise a post-earnings gap on day 1 — which the
+    # strategy structurally cannot capture — would make even buy_and_hold look
+    # like it "lost" to the benchmark. Anchoring both at opens[1] makes
+    # buy_and_hold ≡ benchmark (to within transaction cost).
+    bench_entry = opens[1]
 
     for i in range(n):
         # ---- mark-to-market at today's close ----
@@ -203,7 +209,8 @@ def run_backtest(
             EquityPoint(
                 date=window[i].date,
                 strategy=round(equity, 6),
-                benchmark=round(closes[i] / bench0, 6),
+                # flat at 1.0 on bar 0 (not yet actionable), then hold from opens[1]
+                benchmark=1.0 if i == 0 else round(closes[i] / bench_entry, 6),
             )
         )
 
@@ -231,7 +238,8 @@ def _metrics(curve: list[EquityPoint], trades: list[Trade], closes: list[float],
     n = len(curve)
     final = curve[-1].strategy
     total_ret = (final - 1.0) * 100.0
-    bench_ret = (closes[-1] / closes[0] - 1.0) * 100.0
+    # derive from the curve so it always matches the (opens[1]-anchored) benchmark
+    bench_ret = (curve[-1].benchmark - 1.0) * 100.0
     days = (curve[-1].date - curve[0].date).days or 1
     cagr = ((final) ** (365.0 / days) - 1.0) * 100.0 if final > 0 else -100.0
 
