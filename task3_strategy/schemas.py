@@ -87,8 +87,14 @@ class EquityPoint(BaseModel):
 
 class BacktestMetrics(BaseModel):
     total_return_pct: float
-    benchmark_return_pct: float          # buy-and-hold over the same window
-    excess_return_pct: float             # strategy − benchmark
+    benchmark_return_pct: float          # buy-and-hold over the FULL window (from filing date)
+    excess_return_pct: float             # strategy − full-window benchmark
+    # Entry-aligned benchmark: buy-and-hold from the strategy's FIRST entry to
+    # the end. Isolates timing/signal quality from the cash-drag of the
+    # indicator warm-up period (when the strategy structurally cannot trade).
+    # None when the strategy never entered.
+    benchmark_from_entry_pct: float | None = None
+    excess_vs_entry_pct: float | None = None   # strategy − entry-aligned benchmark
     cagr_pct: float
     sharpe: float                        # annualised, rf=0
     max_drawdown_pct: float

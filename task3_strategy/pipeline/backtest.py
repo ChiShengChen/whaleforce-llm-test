@@ -256,10 +256,19 @@ def _metrics(curve: list[EquityPoint], trades: list[Trade], closes: list[float],
     wins = [t for t in closed if (t.return_pct or 0) > 0]
     win_rate = (len(wins) / len(closed) * 100.0) if closed else 0.0
 
+    # Entry-aligned benchmark: hold from the first entry price to the last close.
+    bench_from_entry = excess_vs_entry = None
+    if trades and trades[0].entry_price:
+        bench_from_entry = (closes[-1] / trades[0].entry_price - 1.0) * 100.0
+        excess_vs_entry = round(total_ret - bench_from_entry, 2)
+        bench_from_entry = round(bench_from_entry, 2)
+
     return BacktestMetrics(
         total_return_pct=round(total_ret, 2),
         benchmark_return_pct=round(bench_ret, 2),
         excess_return_pct=round(total_ret - bench_ret, 2),
+        benchmark_from_entry_pct=bench_from_entry,
+        excess_vs_entry_pct=excess_vs_entry,
         cagr_pct=round(cagr, 2),
         sharpe=round(sharpe, 2),
         max_drawdown_pct=round(max_dd * 100.0, 2),

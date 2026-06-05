@@ -102,7 +102,10 @@ async def run_strategy_pipeline(*, ticker: str, job_id: str | None = None) -> St
         "The LLM selected the strategy and parameters from a fixed menu; execution is fully deterministic. "
         "Rule-based execution prevents future prices from leaking into the result, but the strategy *selection* "
         "could still reflect the model's prior knowledge — treat the thesis as a hypothesis, not a prediction.",
-        "Every run is shown against buy-and-hold of the same stock over the identical window.",
+        "Two benchmarks are shown: buy-and-hold over the full window (from the filing date — "
+        "charges the strategy for the indicator warm-up period when it cannot yet trade), and "
+        "buy-and-hold from the strategy's first entry (isolates timing/signal quality from that "
+        "warm-up cash drag).",
     ]
     logger.info(
         "task3_done", ticker=ticker, entry=spec.entry_signal,

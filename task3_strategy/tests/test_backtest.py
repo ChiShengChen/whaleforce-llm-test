@@ -80,6 +80,33 @@ def test_sma_cross_generates_trades():
     assert r.metrics.n_trades >= 1
 
 
+def test_entry_aligned_benchmark_isolates_warmup_drag():
+    """A momentum strategy that can only enter after its lookback warm-up should
+    trail the full-window benchmark (missed the early rise) but ~match the
+    entry-aligned benchmark (once in, it just held)."""
+    closes = [100] * 5 + [100 + 8 * i for i in range(1, 26)]  # flat, then steady rise
+    prices = _series(closes)
+    spec = StrategySpec(entry_signal="momentum", momentum_lookback_days=5,
+                        momentum_threshold_pct=1.0, exit_signal="hold")
+    r = run_backtest(prices, spec, start=prices[0].date)
+    m = r.metrics
+    assert m.n_trades >= 1
+    assert m.benchmark_from_entry_pct is not None
+    # full-window benchmark captures the whole rise; entry-aligned starts later → smaller
+    assert m.benchmark_return_pct > m.benchmark_from_entry_pct
+    # once invested the strategy just holds → excess vs its own entry is ~0 (only cost)
+    assert abs(m.excess_vs_entry_pct) < 1.0
+
+
+def test_entry_aligned_benchmark_none_when_no_trades():
+    prices = _series([100, 100, 100, 100, 130])
+    spec = StrategySpec(entry_signal="momentum", momentum_lookback_days=1, momentum_threshold_pct=5.0)
+    r = run_backtest(prices, spec, start=prices[0].date)
+    assert r.metrics.n_trades == 0
+    assert r.metrics.benchmark_from_entry_pct is None
+    assert r.metrics.excess_vs_entry_pct is None
+
+
 def test_insufficient_history_raises():
     prices = _series([100])
     with pytest.raises(RuntimeError):

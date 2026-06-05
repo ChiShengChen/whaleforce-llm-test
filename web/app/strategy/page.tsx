@@ -224,16 +224,45 @@ function Metric({ label, value, good }: { label: string; value: string; good?: b
   );
 }
 
+function backtestNote(m: BacktestMetrics): string | null {
+  const full = m.excess_return_pct;
+  const entry = m.excess_vs_entry_pct;
+  if (full >= 0) {
+    return "Beat buy-and-hold over the full window.";
+  }
+  // Underperformed full-window hold. Was it bad timing, or just warm-up cash drag?
+  if (entry != null && entry >= -2) {
+    return "Trailed full-window buy-and-hold mainly because the indicator warm-up kept it " +
+      "in cash early (it structurally couldn't trade yet). Once invested, it roughly matched " +
+      "holding from its own entry — so this is a warm-up cash-drag gap, not bad timing.";
+  }
+  if (entry != null && entry < -2) {
+    return "Underperformed both buy-and-hold AND holding from its own entry — the timing itself " +
+      "lost, not just the warm-up period. Shown honestly.";
+  }
+  return "Underperformed simply holding the stock — shown honestly, not hidden.";
+}
+
 function BacktestPanel({ m }: { m: BacktestMetrics }) {
+  const hasEntryBench = m.benchmark_from_entry_pct != null;
   return (
     <div className="border border-zinc-800 rounded-md p-4">
       <h3 className="text-sm font-semibold text-zinc-200 mb-3">
         Backtest <span className="text-xs text-zinc-500 font-normal">({m.days} days, {m.transaction_cost_bps} bps/side)</span>
       </h3>
-      <div className="grid grid-cols-3 gap-y-4 gap-x-2">
+      <div className="grid grid-cols-3 gap-y-3 gap-x-2 mb-3">
         <Metric label="Strategy" value={pct(m.total_return_pct)} good={m.total_return_pct >= 0} />
-        <Metric label="Buy & hold" value={pct(m.benchmark_return_pct)} />
-        <Metric label="Excess" value={pct(m.excess_return_pct)} good={m.excess_return_pct >= 0} />
+        <Metric label="Hold · full window" value={pct(m.benchmark_return_pct)} />
+        <Metric label="Excess · full" value={pct(m.excess_return_pct)} good={m.excess_return_pct >= 0} />
+        {hasEntryBench && (
+          <>
+            <div />
+            <Metric label="Hold · from entry" value={pct(m.benchmark_from_entry_pct as number)} />
+            <Metric label="Excess · from entry" value={pct(m.excess_vs_entry_pct as number)} good={(m.excess_vs_entry_pct as number) >= 0} />
+          </>
+        )}
+      </div>
+      <div className="grid grid-cols-3 gap-y-4 gap-x-2 border-t border-zinc-800 pt-3">
         <Metric label="CAGR" value={pct(m.cagr_pct)} good={m.cagr_pct >= 0} />
         <Metric label="Sharpe" value={m.sharpe.toFixed(2)} good={m.sharpe >= 1} />
         <Metric label="Max drawdown" value={pct(m.max_drawdown_pct)} good={false} />
@@ -241,10 +270,8 @@ function BacktestPanel({ m }: { m: BacktestMetrics }) {
         <Metric label="Trades" value={String(m.n_trades)} />
         <Metric label="Exposure" value={`${m.exposure_pct.toFixed(0)}%`} />
       </div>
-      {m.excess_return_pct < 0 && (
-        <p className="text-xs text-amber-400/80 mt-3">
-          Underperformed simply holding the stock — shown honestly, not hidden.
-        </p>
+      {backtestNote(m) && (
+        <p className="text-xs text-amber-400/80 mt-3">{backtestNote(m)}</p>
       )}
     </div>
   );
