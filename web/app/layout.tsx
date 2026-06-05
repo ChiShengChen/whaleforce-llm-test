@@ -15,7 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="sticky top-0 z-40 backdrop-blur bg-zinc-950/80 border-b border-zinc-800 px-6 py-3">
           <div className="max-w-6xl mx-auto flex items-center gap-6 text-sm">
             <a href="/" className="font-semibold text-zinc-100 shrink-0">
-              <span className="text-emerald-400">●</span> whaleforce-llm-test
+              <span className="text-emerald-400">●</span> US-stock-llm-test
             </a>
             <NavLinks />
             <div className="flex-1" />
