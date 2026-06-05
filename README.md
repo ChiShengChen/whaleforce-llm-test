@@ -1,6 +1,6 @@
-# Whaleforce — LLM Engineer Coding Test (2026)
+# US-stock LLM — Browser Agent · SEC 10-K Extractor · Strategy Lab
 
-Both tasks implemented, deployed, and live.
+Implemented, deployed, and live.
 
 | Live URL | Purpose |
 |---|---|
@@ -10,8 +10,8 @@ Both tasks implemented, deployed, and live.
 | **https://whaleforce-llm-test.vercel.app/jobs/{job_id}** | Failure inspector — screenshots, DOM snapshots, step trace, eval metadata |
 | **https://whaleforce-llm-test-production.up.railway.app/task1/health** | Backend health probe |
 
-> The deployed frontends are ready for the held-out validation the spec
-> mentions — submit anything you like to either form.
+> The deployed frontends accept arbitrary input — submit anything you like
+> to any of the forms.
 
 ---
 
@@ -23,7 +23,7 @@ Both tasks implemented, deployed, and live.
 | 2 | [docs/analysis/task1_report.md](docs/analysis/task1_report.md) | Task 1 perf / cost / scalability / correctness analysis — every number queried live from the cost ledger, never estimated |
 | 3 | [docs/analysis/task2_report.md](docs/analysis/task2_report.md) | Same shape for Task 2 |
 | 4 | [docs/VERIFICATION.md](docs/VERIFICATION.md) | 16-section living checklist with every bug found and fixed during development (root cause + fix, not "and we fixed it") |
-| 5 | [docs/spec/PRODUCTION_HARDENING_ROADMAP.md](docs/spec/PRODUCTION_HARDENING_ROADMAP.md) | 8-week, 30-PR plan for taking this from interview-grade to quant-firm-production-grade. Week-4 CI gate already landed. |
+| 5 | [docs/spec/PRODUCTION_HARDENING_ROADMAP.md](docs/spec/PRODUCTION_HARDENING_ROADMAP.md) | 8-week, 30-PR plan for taking this from its current state to quant-firm-production-grade. Week-4 CI gate already landed. |
 
 Then dive into:
 
@@ -48,8 +48,8 @@ task2_10k_extractor/     SEC 10-K extractor — pipeline/ (ingest → normalize 
 web/                     Next.js 15 frontend — 5 pages: /, /task1, /task2,
                          /dashboard, /jobs/[id]
 prompts/                 Versioned prompt templates (4 for Task 1 + 3 for Task 2)
-docs/spec/               Original interview spec (EN + ZH)
-                         + PRODUCTION_HARDENING_ROADMAP.md (post-interview plan)
+docs/spec/               Original project spec (EN + ZH)
+                         + PRODUCTION_HARDENING_ROADMAP.md (production roadmap)
 docs/adr/                ADR-001 through ADR-006
 docs/analysis/           Per-task perf / cost / scalability analysis
 docs/VERIFICATION.md     Living verification checklist + full bug history
@@ -261,6 +261,6 @@ These were iterated on with Claude as the primary AI collaborator. The full bug-
 
 ## 🛣 Where to take this next
 
-[`docs/spec/PRODUCTION_HARDENING_ROADMAP.md`](docs/spec/PRODUCTION_HARDENING_ROADMAP.md) is the 8-week, 30-PR working spec for taking this from interview-grade to a system a professional quantitative firm could adopt. Each PR has a goal, deliverables list, and acceptance criteria; the roadmap also commits to 12 binary criteria for "production-ready" and 8 SLOs to negotiate with customers once Week 6 lands.
+[`docs/spec/PRODUCTION_HARDENING_ROADMAP.md`](docs/spec/PRODUCTION_HARDENING_ROADMAP.md) is the 8-week, 30-PR working spec for taking this from its current build to a system a professional quantitative firm could adopt. Each PR has a goal, deliverables list, and acceptance criteria; the roadmap also commits to 12 binary criteria for "production-ready" and 8 SLOs to negotiate with customers once Week 6 lands.
 
 **Week 4 (CI eval gate, PR-401) has already landed** as proof the roadmap is real, not aspirational. The next PR per the roadmap is Week 1 PR-101: API key authentication via FastAPI middleware.
