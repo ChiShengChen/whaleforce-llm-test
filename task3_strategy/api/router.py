@@ -66,12 +66,24 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "task": "task3-strategy"}
 
 
+_JOB_TIMEOUT_S = 150.0
+
+
 async def _run(job: Task3Job) -> None:
     job.status = JobStatus.RUNNING
     job.updated_at = datetime.now(timezone.utc)
     try:
-        job.result = await run_strategy_pipeline(ticker=job.ticker, job_id=job.job_id)
+        job.result = await asyncio.wait_for(
+            run_strategy_pipeline(ticker=job.ticker, job_id=job.job_id),
+            timeout=_JOB_TIMEOUT_S,
+        )
         job.status = JobStatus.SUCCEEDED
+    except asyncio.TimeoutError:
+        job.status = JobStatus.FAILED
+        job.error_message = (
+            f"Timed out after {int(_JOB_TIMEOUT_S)}s (10-K extraction + price fetch + "
+            f"backtest). The backend may be slow or Yahoo Finance is throttling — please retry."
+        )
     except QuarantineRefusal as e:
         # Honest refusal: the 10-K extraction wasn't trustworthy (ADR-007).
         job.status = JobStatus.QUARANTINED

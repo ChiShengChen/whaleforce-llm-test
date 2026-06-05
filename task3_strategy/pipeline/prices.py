@@ -64,7 +64,9 @@ def fetch_prices(
     else:
         import yfinance as yf  # local import — heavy dependency
 
-        df = yf.Ticker(ticker).history(period="max", auto_adjust=True)
+        # 10y is plenty for a recent 10-K (we only chart ~1y pre-filing + the
+        # post-filing window); much lighter to download/parse than "max".
+        df = yf.Ticker(ticker).history(period="10y", auto_adjust=True)
         if df is None or df.empty:
             raise RuntimeError(f"no price data for ticker {ticker!r}")
         out = []

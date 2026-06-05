@@ -8,6 +8,7 @@ confident-looking-but-wrong output the quarantine gate exists to prevent.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -59,7 +60,9 @@ async def run_strategy_pipeline(*, ticker: str, job_id: str | None = None) -> St
     logger.info("task3_resolved", ticker=ticker, fy=ref.fiscal_year, filed=ref.filed_date)
 
     # ----- Task 2 extraction (with the structural gate) -----
-    extraction = await run_pipeline(url=ref.url, job_id=job_id)
+    # Skip L3 here: it adds ~20s of sequential LLM calls but rarely recovers a
+    # core item, and Task 3 only needs the core items (L1) + the quarantine gate.
+    extraction = await run_pipeline(url=ref.url, job_id=job_id, enable_l3=False)
     if extraction.quarantined:
         raise QuarantineRefusal(
             f"10-K extraction for {ticker} (FY{ref.fiscal_year}) was quarantined "
@@ -68,7 +71,16 @@ async def run_strategy_pipeline(*, ticker: str, job_id: str | None = None) -> St
         )
 
     # ----- prices -----
-    prices = fetch_prices(ticker)
+    # yfinance is a BLOCKING network call — run it off the event loop so it
+    # can't freeze the whole server (incl. the poll endpoint), and bound it so
+    # a Yahoo rate-limit on a cloud IP fails fast instead of hanging forever.
+    try:
+        prices = await asyncio.wait_for(asyncio.to_thread(fetch_prices, ticker), timeout=30)
+    except asyncio.TimeoutError:
+        raise RuntimeError(
+            f"price fetch for {ticker} timed out after 30s — Yahoo Finance is "
+            f"likely rate-limiting this host. Retry, or switch the price source."
+        )
     if not prices:
         raise RuntimeError(f"no price history for {ticker}")
     first_px, last_px = prices[0].date, prices[-1].date

@@ -37,8 +37,16 @@ def new_job_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
-async def run_pipeline(*, url: str, job_id: str | None = None) -> FilingExtraction:
-    """Full pipeline. Returns FilingExtraction; cost is queried from ledger."""
+async def run_pipeline(
+    *, url: str, job_id: str | None = None, enable_l3: bool = True
+) -> FilingExtraction:
+    """Full pipeline. Returns FilingExtraction; cost is queried from ledger.
+
+    `enable_l3=False` skips the L3 LLM self-consistency layer — useful for
+    latency-sensitive callers (e.g. Task 3's interactive flow) where L3 adds
+    ~20 s of sequential LLM calls but, in practice, rarely recovers a core item
+    that L1/L2 missed. The structural quarantine gate runs the same either way.
+    """
     job_id = job_id or new_job_id()
     started = time.perf_counter()
 
@@ -84,7 +92,7 @@ async def run_pipeline(*, url: str, job_id: str | None = None) -> FilingExtracti
     # after L1 + L2. Budget cap enforced inside; per-call cost recorded in
     # the ledger under purpose=task2.l3.extractor_a|b.
     _, post_l2_overall, _ = score_items(list(items), total_chars=ir.char_total)
-    if post_l2_overall < 0.6 or l1_required_coverage < 1.0:
+    if enable_l3 and (post_l2_overall < 0.6 or l1_required_coverage < 1.0):
         items = await maybe_extract_l3(trace_id=job_id, items=items, ir=ir)
 
     # ----- RECOVERY (deterministic, zero-LLM) -------------------------------
