@@ -17,6 +17,7 @@ from shared.schemas import JobStatus
 
 from task3_strategy.pipeline.orchestrator import (
     QuarantineRefusal,
+    TickerNotFound,
     new_job_id,
     run_strategy_pipeline,
 )
@@ -74,6 +75,10 @@ async def _run(job: Task3Job) -> None:
     except QuarantineRefusal as e:
         # Honest refusal: the 10-K extraction wasn't trustworthy (ADR-007).
         job.status = JobStatus.QUARANTINED
+        job.error_message = str(e)
+    except TickerNotFound as e:
+        # User input error, not a crash — surface a clean message, no class prefix.
+        job.status = JobStatus.FAILED
         job.error_message = str(e)
     except Exception as e:  # noqa: BLE001
         logger.exception("task3_job_crashed", job_id=job.job_id, error=str(e))

@@ -33,6 +33,10 @@ class QuarantineRefusal(RuntimeError):
     """Raised when the underlying 10-K extraction was quarantined."""
 
 
+class TickerNotFound(ValueError):
+    """Raised when the ticker resolves to no US 10-K filer."""
+
+
 def new_job_id() -> str:
     return uuid.uuid4().hex[:16]
 
@@ -43,7 +47,14 @@ async def run_strategy_pipeline(*, ticker: str, job_id: str | None = None) -> St
     ticker = ticker.strip().upper()
 
     # ----- resolve the most recent 10-K -----
-    ref = await resolve_filing(ticker)
+    try:
+        ref = await resolve_filing(ticker)
+    except KeyError:
+        raise TickerNotFound(
+            f"Ticker '{ticker}' not found. Use a US-listed ticker that files a "
+            f"10-K (e.g. AAPL, MSFT, NVDA). Foreign filers that file 20-F instead "
+            f"of 10-K are not supported."
+        )
     filing_date = date.fromisoformat(ref.filed_date)
     logger.info("task3_resolved", ticker=ticker, fy=ref.fiscal_year, filed=ref.filed_date)
 
