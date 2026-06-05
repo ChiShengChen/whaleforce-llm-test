@@ -33,13 +33,14 @@ from shared.schemas import Task1Job
 from task1_browser_agent.agent.state_machine import AgentRunner
 from task1_browser_agent.api.job_store import store
 from task2_10k_extractor.api.router import router as task2_router
+from task3_strategy.api.router import router as task3_router
 
 configure_logging()
 logger = get_logger(__name__)
 
 settings = get_settings()
 
-app = FastAPI(title="Whaleforce — Task 1 + Task 2", version="0.2.0")
+app = FastAPI(title="Whaleforce — Task 1 + Task 2 + Task 3", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -48,6 +49,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(task2_router)
+app.include_router(task3_router)
 
 
 @app.on_event("startup")
