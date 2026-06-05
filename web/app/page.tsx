@@ -3,7 +3,7 @@ export default function HomePage() {
     <div className="space-y-10">
       <section>
         <h1 className="text-3xl font-semibold mb-2">
-          Whaleforce — LLM Engineer Coding Test
+          US-stock — LLM Engineer Coding Test
         </h1>
         <p className="text-zinc-400 text-sm leading-relaxed max-w-3xl">
           Two systems, one repo. Production-grade discipline applied throughout:
