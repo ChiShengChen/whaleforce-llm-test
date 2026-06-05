@@ -501,3 +501,107 @@ export async function pollExtraction(
   tick();
   return () => { stopped = true; };
 }
+
+// ===========================================================================
+// Task 3 — fundamentals-driven strategy lab
+// ===========================================================================
+
+export interface ThesisCitation {
+  item_id: string;
+  item_title: string;
+  quote: string;
+}
+
+export interface StrategySpec {
+  entry_signal: "buy_and_hold" | "sma_cross" | "momentum" | "rsi_oversold";
+  exit_signal: "hold" | "sma_reverse" | "rsi_overbought" | "time_exit";
+  stance: "bullish" | "neutral" | "cautious";
+  sma_fast: number; sma_slow: number;
+  momentum_lookback_days: number; momentum_threshold_pct: number;
+  rsi_period: number; rsi_oversold: number; rsi_overbought: number;
+  time_exit_days: number; stop_loss_pct: number; take_profit_pct: number;
+  thesis: string; rationale_entry: string; rationale_exit: string;
+  citations: ThesisCitation[];
+}
+
+export interface PricePoint {
+  date: string; open: number; high: number; low: number; close: number; volume: number;
+}
+
+export interface Trade {
+  entry_date: string; entry_price: number;
+  exit_date: string | null; exit_price: number | null;
+  return_pct: number | null; exit_reason: string;
+}
+
+export interface EquityPoint { date: string; strategy: number; benchmark: number; }
+
+export interface BacktestMetrics {
+  total_return_pct: number; benchmark_return_pct: number; excess_return_pct: number;
+  cagr_pct: number; sharpe: number; max_drawdown_pct: number;
+  win_rate_pct: number; n_trades: number; exposure_pct: number;
+  days: number; transaction_cost_bps: number;
+}
+
+export interface BacktestResult {
+  start_date: string; end_date: string;
+  metrics: BacktestMetrics; trades: Trade[]; equity_curve: EquityPoint[];
+}
+
+export interface StrategyResult {
+  job_id: string; ticker: string; company_name: string | null;
+  filing_url: string; fiscal_year: number | null; filing_available_date: string;
+  prices: PricePoint[]; strategy: StrategySpec; backtest: BacktestResult;
+  caveats: string[]; cost_usd: number; created_at: string;
+}
+
+export interface Task3Job {
+  job_id: string; ticker: string; status: JobStatus;
+  result: StrategyResult | null; error_message: string | null;
+  created_at: string; updated_at: string;
+}
+
+export async function createStrategy(ticker: string): Promise<Task3Job> {
+  const res = await fetch(`${API_BASE}/task3/strategies`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticker }),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = typeof body?.detail === "string" ? body.detail
+        : Array.isArray(body?.detail) ? body.detail.map((d: { msg?: string }) => d.msg).join("; ") : "";
+    } catch { /* not json */ }
+    throw new Error(detail ? `${res.status} — ${detail}` : `createStrategy failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function getStrategy(jobId: string): Promise<Task3Job> {
+  const res = await fetch(`${API_BASE}/task3/strategies/${jobId}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`getStrategy failed: ${res.status}`);
+  return res.json();
+}
+
+export async function pollStrategy(
+  jobId: string,
+  onUpdate: (j: Task3Job) => void,
+  intervalMs = 1500,
+): Promise<() => void> {
+  let stopped = false;
+  const tick = async () => {
+    if (stopped) return;
+    try {
+      const j = await getStrategy(jobId);
+      onUpdate(j);
+      if (j.status === "succeeded" || j.status === "failed" || j.status === "quarantined") return;
+    } catch (e) {
+      console.error(e);
+    }
+    if (!stopped) setTimeout(tick, intervalMs);
+  };
+  tick();
+  return () => { stopped = true; };
+}

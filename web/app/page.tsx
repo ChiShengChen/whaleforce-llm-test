@@ -63,6 +63,31 @@ export default function HomePage() {
             Try it →
           </div>
         </a>
+
+        <a
+          href="/strategy"
+          className="group block border border-zinc-800 rounded-md p-5 hover:border-emerald-700 hover:bg-emerald-950/10 transition-colors md:col-span-2"
+        >
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-lg font-semibold">Task 3</h2>
+            <span className="text-xs text-zinc-500 uppercase tracking-wider">
+              Fundamentals → Strategy → Backtest (built on Task 2)
+            </span>
+          </div>
+          <p className="text-sm text-zinc-400 mt-2 leading-relaxed">
+            Enter a ticker → its latest 10-K runs through Task 2 → an LLM forms a
+            thesis and picks one executable strategy from a fixed menu, grounded in
+            the filing (with citations). A{" "}
+            <span className="text-amber-400">filing-date-aligned</span> backtest then
+            tests it — signals act only <em>after</em> the 10-K was public, so there
+            is no lookahead — shown as a candlestick with entry/exit markers, an
+            equity curve vs buy-and-hold, and honest metrics (losses included).
+            Quarantined 10-Ks are refused, not strategised.
+          </p>
+          <div className="text-xs text-emerald-400 mt-3 group-hover:underline">
+            Try it →
+          </div>
+        </a>
       </section>
 
       <section className="border border-zinc-800 rounded-md p-5">
