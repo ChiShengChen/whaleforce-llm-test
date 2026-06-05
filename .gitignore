@@ -38,10 +38,12 @@ data/
 # The committed eval/report.json baselines stay; the per-job JSON does not.
 task1_browser_agent/eval/jobs/
 task2_10k_extractor/eval/jobs/
+# labels.json (training data) stays ignored; platt_params.json (the tiny
+# trained calibration model) is COMMITTED so the deployed backend calibrates
+# the same way as local — otherwise prod runs uncalibrated and quarantines
+# clean filings (e.g. AAPL fell below the 0.45 threshold). See ADR-007.
 task1_browser_agent/eval/labels.json
-task1_browser_agent/eval/platt_params.json
 task2_10k_extractor/eval/labels.json
-task2_10k_extractor/eval/platt_params.json
 
 # Playwright
 test-results/
