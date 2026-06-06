@@ -18,14 +18,54 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 import yaml
 
+from shared.config import get_settings
+
 # Same SEC-compliant UA as ingest.py — EDGAR rate-limits anonymous scrapers.
 SEC_UA = "Whaleforce Interview Project (research, contact: chenchisheng@example.com)"
+
+_SEC_HEADERS = {"User-Agent": SEC_UA, "Accept": "application/json"}
+
+# SEC throttles to ~10 req/s and returns 429 (sometimes 503) when exceeded.
+# Retry with backoff so a transient throttle doesn't fail the whole job.
+_SEC_MAX_RETRIES = 4
+
+
+async def _sec_get_json(url: str) -> dict:
+    """GET a SEC JSON endpoint, retrying on 429/503 with backoff.
+
+    Honours the `Retry-After` header when present, otherwise falls back to
+    exponential backoff (0.5, 1, 2, 4s). Non-retryable statuses raise
+    immediately via `raise_for_status()`.
+    """
+    last_exc: httpx.HTTPStatusError | None = None
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for attempt in range(_SEC_MAX_RETRIES):
+            resp = await client.get(url, headers=_SEC_HEADERS)
+            if resp.status_code in (429, 503) and attempt < _SEC_MAX_RETRIES - 1:
+                retry_after = resp.headers.get("Retry-After", "")
+                delay = (
+                    float(retry_after)
+                    if retry_after.isdigit()
+                    else 0.5 * (2 ** attempt)
+                )
+                last_exc = httpx.HTTPStatusError(
+                    f"HTTP {resp.status_code} from {url}",
+                    request=resp.request,
+                    response=resp,
+                )
+                await asyncio.sleep(delay)
+                continue
+            resp.raise_for_status()
+            return resp.json()
+    # Unreachable in practice (loop either returns or raises), but keeps types honest.
+    raise last_exc if last_exc else RuntimeError(f"unreachable: {url}")
 
 # CIKs picked to span industries × format era × size.
 # Sourced from EDGAR's company search. Format era inferred from year:
@@ -68,40 +108,87 @@ class FilingRef:
 async def fetch_submissions(cik: int) -> dict:
     padded = f"CIK{cik:010d}"
     url = f"https://data.sec.gov/submissions/{padded}.json"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url, headers={"User-Agent": SEC_UA, "Accept": "application/json"})
-        resp.raise_for_status()
-        return resp.json()
+    return await _sec_get_json(url)
 
 
 # SEC's public ticker-to-CIK mapping. Single download (~1.6 MB) covers every
 # SEC-registered ticker. Cached in-process so we hit it at most once per
-# Python process; safe to call concurrently (the dict is built atomically).
+# Python process, AND persisted to disk so cold jobs don't re-download it (and
+# trip SEC's rate limit) every time. The CIK map changes slowly, so a weekly
+# refresh is plenty.
 _SEC_TICKER_MAP: dict[str, int] | None = None
 _SEC_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
+_TICKER_MAP_TTL_S = 7 * 24 * 3600  # weekly
+
+
+def _ticker_cache_path() -> Path:
+    # Sits alongside the SQLite db / artifacts under ./data by default.
+    return Path(get_settings().artifact_dir).parent / "sec_ticker_map.json"
+
+
+def _read_ticker_cache(*, max_age_s: float | None) -> dict[str, int] | None:
+    """Load the cached ticker→CIK map, or None if absent/stale/corrupt.
+
+    `max_age_s=None` ignores age — used as a last-resort fallback when SEC is
+    throttling and a fresh download is impossible.
+    """
+    path = _ticker_cache_path()
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        return None
+    if max_age_s is not None and age > max_age_s:
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return {str(k).upper(): v for k, v in raw.items() if isinstance(v, int)}
+
+
+def _write_ticker_cache(mapping: dict[str, int]) -> None:
+    path = _ticker_cache_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(mapping), encoding="utf-8")
+    except OSError:
+        pass  # cache is best-effort; never fail a lookup over it
 
 
 async def fetch_sec_ticker_map() -> dict[str, int]:
     """Return a UPPERCASE-ticker → CIK mapping for every SEC filer.
 
     Schema from SEC: `{"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}, ...}`
+
+    Lookup order: in-process cache → fresh disk cache → SEC download →
+    stale disk cache (if SEC is throttling). Only raises if every layer fails.
     """
     global _SEC_TICKER_MAP
     if _SEC_TICKER_MAP is not None:
         return _SEC_TICKER_MAP
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(
-            _SEC_TICKER_MAP_URL,
-            headers={"User-Agent": SEC_UA, "Accept": "application/json"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
+
+    fresh = _read_ticker_cache(max_age_s=_TICKER_MAP_TTL_S)
+    if fresh is not None:
+        _SEC_TICKER_MAP = fresh
+        return fresh
+
+    try:
+        data = await _sec_get_json(_SEC_TICKER_MAP_URL)
+    except httpx.HTTPError:
+        # SEC unreachable / throttling — fall back to a stale copy if we have one.
+        stale = _read_ticker_cache(max_age_s=None)
+        if stale is not None:
+            _SEC_TICKER_MAP = stale
+            return stale
+        raise
+
     out: dict[str, int] = {}
     for entry in data.values():
         ticker = str(entry.get("ticker", "")).upper().strip()
         cik = entry.get("cik_str")
         if ticker and isinstance(cik, int):
             out[ticker] = cik
+    _write_ticker_cache(out)
     _SEC_TICKER_MAP = out
     return out
 
@@ -122,24 +209,19 @@ async def fetch_all_historical(cik: int) -> dict:
     files = main.get("filings", {}).get("files", []) or []
     combined = dict(main["filings"]["recent"])  # shallow copy of lists
     keys = list(combined.keys())
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for f in files:
-            name = f.get("name")
-            if not name:
-                continue
-            url = f"https://data.sec.gov/submissions/{name}"
-            try:
-                resp = await client.get(
-                    url, headers={"User-Agent": SEC_UA, "Accept": "application/json"}
-                )
-                resp.raise_for_status()
-                page = resp.json()
-            except Exception:
-                continue
-            for k in keys:
-                page_list = page.get(k, [])
-                if isinstance(page_list, list):
-                    combined[k] = list(combined[k]) + list(page_list)
+    for f in files:
+        name = f.get("name")
+        if not name:
+            continue
+        url = f"https://data.sec.gov/submissions/{name}"
+        try:
+            page = await _sec_get_json(url)
+        except Exception:
+            continue
+        for k in keys:
+            page_list = page.get(k, [])
+            if isinstance(page_list, list):
+                combined[k] = list(combined[k]) + list(page_list)
     out = dict(main)
     out.setdefault("filings", {})
     out["filings"]["recent"] = combined
