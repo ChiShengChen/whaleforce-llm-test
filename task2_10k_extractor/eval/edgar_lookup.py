@@ -88,6 +88,40 @@ KNOWN_CIKS: dict[str, dict[str, str | int]] = {
 }
 
 
+# SIC (Standard Industrial Classification) → coarse industry bucket. Tickers not
+# in KNOWN_CIKS get their industry derived from the `sic` field SEC returns on
+# every submissions record, so we no longer fall back to a blind "unknown".
+# Ranges are checked in order; first match wins (so the narrow auto range is
+# listed before the broad transport-equipment range). Buckets mirror the
+# vocabulary used in KNOWN_CIKS, plus "auto" for motor vehicles.
+_SIC_INDUSTRY_RANGES: list[tuple[int, int, str]] = [
+    (2833, 2836, "pharma"),      # medicinal chemicals & biological products
+    (3570, 3579, "tech"),        # computers & office equipment
+    (3600, 3674, "tech"),        # electronics & semiconductors
+    (7370, 7379, "tech"),        # software & IT services
+    (3711, 3716, "auto"),        # motor vehicles & car bodies/parts
+    (6020, 6036, "bank"),        # commercial banks & savings institutions
+    (1300, 1399, "energy"),      # crude petroleum & natural gas extraction
+    (2900, 2999, "energy"),      # petroleum refining
+    (5200, 5999, "retail"),      # retail trade
+    (6798, 6798, "reit"),        # real estate investment trusts
+    (3400, 3569, "industrial"),  # fabricated metal & machinery
+    (3700, 3799, "industrial"),  # other transportation equipment (aircraft etc.)
+]
+
+
+def _industry_from_sic(sic: object) -> str:
+    """Map a SEC SIC code to a coarse industry bucket, or 'unknown'."""
+    try:
+        code = int(sic)  # SEC returns sic as int or numeric string
+    except (TypeError, ValueError):
+        return "unknown"
+    for low, high, bucket in _SIC_INDUSTRY_RANGES:
+        if low <= code <= high:
+            return bucket
+    return "unknown"
+
+
 @dataclass
 class FilingRef:
     ticker: str
@@ -279,7 +313,7 @@ async def resolve_filing(
     Lookup order:
       1. Our curated KNOWN_CIKS — gives industry metadata for the eval set.
       2. SEC's public ticker→CIK map — covers every SEC-registered filer
-         (~13k entries). Industry recorded as "unknown".
+         (~13k entries). Industry derived from the filing's SIC code.
 
     Raises KeyError only if neither layer recognises the ticker.
     """
@@ -293,8 +327,10 @@ async def resolve_filing(
         if t not in sec_map:
             raise KeyError(f"ticker {t!r} not in our KNOWN_CIKS nor in SEC's public ticker map")
         cik = sec_map[t]
-        industry = "unknown"
+        industry = ""  # derived from the SIC code once submissions are fetched
     submissions = await fetch_submissions(cik)
+    if not industry:
+        industry = _industry_from_sic(submissions.get("sic"))
     picked = _pick_10k_filing(submissions, fiscal_year=fiscal_year)
     if picked is None and fiscal_year is not None:
         # Specific year requested but missing from `recent` — fall through
