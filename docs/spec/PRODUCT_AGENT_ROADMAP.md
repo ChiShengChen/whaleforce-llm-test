@@ -76,14 +76,25 @@ trip investment-adviser (RIA / 投顧) rules in most jurisdictions. Decide the p
 
 ## 3. Operational agents — the analysis→action gap
 
-### Task 10 — Portfolio / risk & position-sizing agent  *(highest real-money value)*
+### Task 10 — Portfolio / risk & position-sizing agent  ✅ **BUILT (2026-06-07)** *(the capstone)*
 Real accounts hold many names; sizing decides P&L more than selection does.
 
-- Inputs: the per-ticker signals from Task 3 / Task 4 / Task 5.
-- Logic: position sizing (risk parity / vol targeting), correlation & exposure caps, single-name
-  cap, total leverage cap, dynamic stop / drawdown control.
-- Output: a target portfolio (weights) + risk report, backtestable as a portfolio (not per-name).
-- **Reuses:** both backtest engines; needs a portfolio-level backtest extension.
+- **Implemented:** `task10_portfolio/` (schemas, `pipeline/{signals,sizing,backtest,autoresearch,orchestrator}.py`,
+  `api/router.py`), prompt, wired at `/task10/portfolios`; `/portfolio` web page + nav + home card.
+- **How:** a watchlist → each name's daily long/flat from the **Task 4** agent (reused end-to-end,
+  via Task 5's `inmarket_by_date`), projected onto a common ~3y trading-day axis → an LLM picks ONE
+  sizing policy from a fixed DSL (**equal_weight / inverse_vol / risk_parity (ERC) /
+  signal_proportional** + single-name cap + gross cap + vol target + rebalance) from as-of universe
+  stats (breadth, vol dispersion, mean correlation) → a deterministic, lookahead-free **portfolio
+  backtest** (periodic rebalance, weights drift between, turnover cost) vs an equal-weight
+  always-invested basket *and* the S&P 500.
+- **New engine dimension:** the first portfolio-level (multi-name) backtest + its own
+  `PortfolioMetrics` (n_holdings, gross exposure, turnover, realised-vs-target vol).
+- **Verified:** 10 unit tests (sizing math incl. a real cap-redistribution bug caught + fixed; ERC;
+  vol-target de-risk; portfolio backtest) + a live 5-name run (inverse_vol, +145% / Sharpe 1.71 /
+  +66% alpha vs SPY; honestly ≈ the basket this window).
+- **Still TODO:** true covariance-aware vol target per name (currently book-level), sector caps,
+  and an eval set.
 
 ### Task 11 — Execution / monitoring agent
 Turns analysis into action for self-use.
