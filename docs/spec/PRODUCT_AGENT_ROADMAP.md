@@ -126,10 +126,20 @@ Task 11 (execution), not just emitting another opinion.
   *(Correction: Task 3 and Task 4 ship unit tests only — they do NOT have `eval_set.yaml`. Task 5
   is the first strategy agent with a full eval set.)*
 
-### Task 6 — Form 4 insider-trading agent  *(real-money friendly)*
+### Task 6 — Form 4 insider-trading agent  ✅ **BUILT (2026-06-07)**
 Insider buy/sell filings → event-study-style, backtestable signal.
 - Free, legal, EDGAR-native, alpha literature support.
-- **Reuses:** EDGAR ingest (new filing type), backtest engine.
+- **Reuses:** the Task 2 SEC client (UA + 429/503 retry + ticker→CIK cache), Task 4's backtest metrics.
+- **Implemented:** `task6_insider/` (schemas, `pipeline/{forms,signals,backtest,autoresearch,orchestrator}.py`,
+  `api/router.py`), prompt, wired at `/task6/insiders`; `/insider` web page + nav + home card.
+  Fetches + parses Form 4 ownership XML (bounded + logged, never silent), builds as-of insider-flow
+  readings keyed off **filing date** (lookahead-safe), LLM picks a strategy from a fixed DSL
+  (buy_and_hold / any_insider_buy / cluster_buy / net_value_buy), deterministic backtest. Only
+  open-market P/S count; grants/exercises/gifts excluded; selling is a weak exit, never a short.
+  Degrades to a buy-and-hold baseline (loud caveat) for foreign filers / no insider activity.
+- **Verified:** unit tests (`tests/test_signals.py` — parse, lookahead-free aggregation, backtest
+  invariants) + a live AAPL run (150 Form 4s → 207 txns; net-selling → correctly chose the baseline).
+- **Still TODO:** a curated eval set (cluster-buy positives + foreign-filer + no-data cases).
 
 ### Task 7 — 13F institutional-holdings agent
 "Which funds are accumulating X."
