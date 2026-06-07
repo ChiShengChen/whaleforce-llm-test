@@ -62,10 +62,15 @@ The #1 killer of real strategies: the live data pipeline silently differs from t
 parity test that asserts backtest-feed == live-feed for a sampled date range. Extends the
 existing "fail loud, never silent" principle to data freshness.
 
-### F-B — Paid data feed migration
-yfinance is personal-use only. Pick one (Polygon / Tiingo / Alpaca Data / IEX Cloud) and put it
-behind the `fetch_prices` interface so the swap is one module. Decide **before** F-A, since
-parity guarantees depend on the chosen vendor's point-in-time semantics.
+### F-B — Paid data feed migration  ◑ **ABSTRACTION BUILT (2026-06-07)**
+yfinance is personal-use only. `fetch_prices` is now behind a **pluggable provider**
+(`task3_strategy/pipeline/prices.py`): `settings.price_provider` ∈ {`yfinance` (default), `tiingo`},
+both returning split/dividend-adjusted OHLCV, cache keyed per provider, and a paid provider that
+errors/lacks a key **falls back to yfinance** so a feed outage never hard-breaks the app. Tiingo is
+implemented (licensed EOD); flipping to it is a one-line config + `TIINGO_API_KEY` — no code change.
+Dispatch + fallback covered by `task3_strategy/tests/test_prices.py` (4 tests).
+- **Remaining:** the user provides a Tiingo (or other) account/key; add more providers behind the
+  same interface as needed. The vendor's point-in-time semantics then feed F-A's parity proof.
 
 ### F-C — Compliance positioning
 Pure self-use is fine. The moment the product gives *another person* buy/sell guidance it can
