@@ -111,9 +111,20 @@ Task 11 (execution), not just emitting another opinion.
   returns ([ADR-008](../adr/ADR-008-ensemble-arbiter-no-lookahead.md)). Graceful technical-only
   fallback when no 10-K. Combined-position backtest is lookahead-aligned to one common window.
 - **Verified:** deterministic combine tests (`task5_ensemble/tests/test_combine.py`, incl. the
-  ensemble-of-one-agent ≡ that-agent consistency check) + a live AAPL end-to-end run.
-- **Still TODO for product-grade:** a curated eval set (mirroring Task 3/4's `eval_set.yaml`,
-  esp. *conflict* cases where the two legs disagree), and a `/task5` web page.
+  ensemble-of-one-agent ≡ that-agent consistency check) + a live end-to-end run.
+- **Eval:** `task5_ensemble/eval/` (`eval_set.yaml` + `runner.py` + `report.json`), Task-2 style.
+  8 cases — agree mega-caps, conflict candidates, a foreign-filer technical-only fallback, and a
+  graceful-fail. Grades only what is deterministic (lookahead boundary, populated metrics,
+  cost/time, foreign-filer fallback, graceful fail); the stochastic arbiter choice is recorded,
+  not graded. Baseline: **8/8 pass**, agreement spread agree:1 / conflict:2 / single_leg:4, cost
+  ~$0.019 total. The run surfaced (and the eval now records) a real **modeling boundary**: a
+  daily-exposure ensemble cannot reproduce a deferred leg's *intrabar stop* — `defer` drift was
+  ~16% for an INTC stop-overlay strategy vs <0.5% for clean legs. Documented in `combine.py`.
+- **Still TODO for product-grade:** a `/task5` web page is done (`web/app/ensemble/`); remaining
+  is a `report-baseline.json` + CI wiring like Task 1/2's regression gate.
+
+  *(Correction: Task 3 and Task 4 ship unit tests only — they do NOT have `eval_set.yaml`. Task 5
+  is the first strategy agent with a full eval set.)*
 
 ### Task 6 — Form 4 insider-trading agent  *(real-money friendly)*
 Insider buy/sell filings → event-study-style, backtestable signal.
