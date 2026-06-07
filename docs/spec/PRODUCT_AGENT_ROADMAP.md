@@ -141,6 +141,19 @@ Insider buy/sell filings → event-study-style, backtestable signal.
   invariants) + a live AAPL run (150 Form 4s → 207 txns; net-selling → correctly chose the baseline).
 - **Still TODO:** a curated eval set (cluster-buy positives + foreign-filer + no-data cases).
 
+### Task 7 — Peer / sector relative-strength agent  ✅ **BUILT (2026-06-07)**
+Relative strength of the stock vs its sector ETF (and the market) → LLM strategy → backtest.
+- **Reuses:** `fetch_prices` (prices only — no new data source), Task 2's SIC→industry map for
+  sector classification, Task 4's backtest metrics.
+- **Implemented:** `task7_relative/` (schemas, `pipeline/{benchmarks,indicators,backtest,autoresearch,orchestrator}.py`,
+  `api/router.py`), prompt, wired at `/task7/relatives`; `/relative` web page + nav + home card.
+  Resolves the sector ETF from the SEC SIC code (XLK/XLV/XLF/XLE/XLY/XLI/XLRE, **SPY fallback**),
+  computes an as-of RS series (stock ÷ sector), LLM picks from a fixed DSL (buy_and_hold /
+  rs_uptrend / rs_breakout / rs_momentum); the backtest holds the *stock* long/flat with RS deciding
+  *when*. Degrades to relative-to-market when the sector can't be classified.
+- **Verified:** 7 unit tests + a live NVDA run (→ XLK; surfaced "beating the market but lagging its
+  own sector", LLM took a cautious stance).
+
 ### Task 7 — 13F institutional-holdings agent
 "Which funds are accumulating X."
 - ⚠️ **Caveat:** 45-day filing lag → weak *live* alpha. Strong narrative, marginal real edge.
