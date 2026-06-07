@@ -246,6 +246,50 @@ These were iterated on with Claude as the primary AI collaborator. The full bug-
 
 ---
 
+## 🎲 Statistical honesty: the placebo control arm & null distribution
+
+A 24-agent suite, each with several strategy templates, runs hundreds of
+lookahead-free backtests. **Multiple testing** guarantees a few will post a great
+Sharpe by pure chance — the single biggest methodological risk in the whole project.
+Rather than hand-wave it away, the suite ships **two placebo control agents** that run
+the *identical* lookahead-free backtest on signals known to have **no economic
+mechanism**:
+
+- **T25 — financial astrology** (Mercury retrograde / moon phase / planetary aspects,
+  computed offline from `ephem`; a calendar date leaks nothing about prices, so it is
+  *more* lookahead-free than any filing).
+- **T26 — 梅花易數 Plum-Blossom I Ching** (a hexagram cast deterministically from the
+  date drives a 體用五行生剋 hold/flat rule).
+
+In both, the LLM writes a florid horoscope / 卦辭 thesis and the engine **ignores it** —
+the ultimate test of the suite's *selection ≠ execution* invariant. If a placebo prints
+a high Sharpe, the **framework is leaking** (or you are watching selection bias), not the
+planets working.
+
+**The reversal — the diviner becomes the suite's significance test.** Because the
+梅花易 casting takes a `seed`, we draw a whole **null distribution**: a panel of 12
+tickers × 40 seeds = **480 worthless backtests** through the real engine. The result is
+a poor-man's White's Reality Check:
+
+```
+null Sharpe (480 placebo draws):  p50 = 0.10   p90 = 0.78   p95 = 0.94   p99 = 1.11   max = 1.29
+→ a real agent needs Sharpe ≥ 0.94 to beat random hexagram-timing at 95% confidence.
+```
+
+So a headline like T20's VIX-gate Sharpe of **1.21** isn't taken at face value — measured
+against this null it lands at **p ≈ 0.004** (significant); an agent posting Sharpe 0.6 would
+be *indistinguishable from luck*, no matter how good its story. Run it yourself:
+
+```bash
+python -m task26_meihua.eval.null_distribution --seeds 40 --observe 1.21
+# → null percentiles + the p-value of any observed Sharpe
+```
+
+The control arm is labelled `is_control` everywhere and rendered with a purple **PLACEBO**
+banner in the UI so it can never be mistaken for a tradable signal.
+
+---
+
 ## 🔭 Honest limitations (read before grading)
 
 1. **Task 1 eval is small** (15 cases) and run-to-run pass rate varies **11–14/15** from Gemini stochasticity at `temperature=0`. The system reports the range honestly rather than the best run. Documented in [task1_report §5.4](docs/analysis/task1_report.md).
