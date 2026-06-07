@@ -227,6 +227,23 @@ DSL → deterministic backtest vs buy-and-hold + SPY):
   that erases the gross overnight edge. Live AAPL: overnight −3.6% vs intraday +26% ann (inverted).
 - **Verified:** 104/104 backend tests (incl. unit tests for all three); live AAPL runs; frontends build.
 
+### Tasks 14–16 — risk / corporate-action / positioning agents  ✅ **BUILT (2026-06-07)**
+- **Task 14 — Volatility regime / risk mgmt.** `task14_volatility/`, `/task14/volatility`, `/volatility`.
+  Prices only. Trailing realized vol + percentile → vol-managed long/flat (participate when calm, step
+  aside when stressed). Judged on risk-adjusted terms (Sharpe/drawdown).
+- **Task 15 — Share buybacks.** `task15_buyback/`, `/task15/buyback`, `/buyback`. Reuses Task 11's XBRL
+  feed: a falling weighted-average diluted share count = net repurchases (keyed off filing date). Live
+  AAPL: −2.19% shares YoY (buying back). *(Fixed a reused-helper bug: share counts use the XBRL `shares`
+  unit, not `USD` — `_quarterly_series` now takes a `unit` param.)*
+- **Task 16 — Short pressure / squeeze.** `task16_short/`, `/task16/short`, `/short`. Free historical
+  short-INTEREST doesn't exist, so this uses **FINRA daily short-VOLUME** (regsho), weekly-sampled +
+  cached, lagged (lookahead-safe). Honest caveats: short volume ≠ short interest, includes MM hedging.
+  Live GME: short-vol percentile 98 (elevated) → squeeze rule.
+- **Verified:** 115/115 backend tests; live AAPL/GME runs; frontends build (shared panels in
+  `web/app/_components/panels.tsx`).
+
+### News / sentiment — *still deferred* (paid data; see above).
+
 ---
 
 ## 5. Recommended sequencing
