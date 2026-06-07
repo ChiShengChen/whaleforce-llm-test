@@ -175,11 +175,20 @@ Relative strength of the stock vs its sector ETF (and the market) → LLM strate
 - **Eval:** `task7_relative/eval/` — 5 cases asserting deterministic sector mapping
   (NVDA→XLK, JPM→XLF, XOM→XLE, QQQ→SPY fallback) + graceful fail. Baseline **5/5**.
 
-### Task 7 — 13F institutional-holdings agent
-"Which funds are accumulating X."
-- ⚠️ **Caveat:** 45-day filing lag → weak *live* alpha. Strong narrative, marginal real edge.
-  Build it, but treat as context/screening signal, not a timing signal.
-- **Reuses:** EDGAR ingest.
+### Task 9 — Institutional / 13F superinvestor-tracking agent  ✅ **BUILT (2026-06-07)**
+"Which well-known funds are accumulating X." *(Built as `task9_institutional/`; the roadmap had
+loosely called this "Task 7" — superseded by the as-built Task 9 numbering.)*
+- ⚠️ **Caveats (surfaced in the UI):** 45-day filing lag → a slow context/confirmation signal, not
+  timing; tracks a curated fund set (not total institutional ownership); matched by issuer NAME
+  (13F has no ticker), fuzzy for similar names.
+- **Implemented:** `task9_institutional/` (schemas, `pipeline/{funds,holdings,backtest,autoresearch,orchestrator}.py`,
+  `api/router.py`), prompt, wired at `/task9/institutional`; `/institutional` web page + nav + home card.
+  13 CIK-verified managers (Berkshire, Baupost, Pershing Square, Renaissance, Citadel, …); fetches each
+  fund's 13F-HR infotables (reusing the Task 2/6 SEC client), name-matches the target, aggregates a
+  filing-date step function of held-shares, LLM picks a strategy from a fixed DSL (any_holding /
+  accumulating / new_buying × distributing / time_exit), deterministic lookahead-free backtest.
+- **Verified:** 7 unit tests + a live AAPL run (4 of 13 funds hold it — Berkshire 228M, Citadel 62M,
+  Renaissance/Bridgewater adding — accurate name-matched data) + an eval set (`task9_institutional/eval/`).
 
 ### Task 8 — Earnings-release agent  ✅ **BUILT (2026-06-07)**
 Extract sentiment / guidance / beat-miss from earnings releases, with citations, and trade the
