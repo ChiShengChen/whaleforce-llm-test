@@ -93,8 +93,10 @@ Real accounts hold many names; sizing decides P&L more than selection does.
 - **Verified:** 10 unit tests (sizing math incl. a real cap-redistribution bug caught + fixed; ERC;
   vol-target de-risk; portfolio backtest) + a live 5-name run (inverse_vol, +145% / Sharpe 1.71 /
   +66% alpha vs SPY; honestly ≈ the basket this window).
-- **Still TODO:** true covariance-aware vol target per name (currently book-level), sector caps,
-  and an eval set.
+- **Eval:** `task10_portfolio/eval/` — 3 cases (clean basket, basket-with-bad-ticker→dropped,
+  too-few→fail). Baseline **3/3** (a too-tight gross-exposure invariant was caught + relaxed: a
+  fully-invested book reads ~100.1% gross from per-rebalance cost drift).
+- **Still TODO:** true covariance-aware vol target per name (currently book-level) + sector caps.
 
 ### Task 11 — Execution / monitoring agent
 Turns analysis into action for self-use.
@@ -150,7 +152,8 @@ Insider buy/sell filings → event-study-style, backtestable signal.
   Degrades to a buy-and-hold baseline (loud caveat) for foreign filers / no insider activity.
 - **Verified:** unit tests (`tests/test_signals.py` — parse, lookahead-free aggregation, backtest
   invariants) + a live AAPL run (150 Form 4s → 207 txns; net-selling → correctly chose the baseline).
-- **Still TODO:** a curated eval set (cluster-buy positives + foreign-filer + no-data cases).
+- **Eval:** `task6_insider/eval/` — 4 cases (large-cap, foreign-filer→zero-Form-4 fallback, graceful
+  fail). Baseline **4/4**.
 
 ### Task 7 — Peer / sector relative-strength agent  ✅ **BUILT (2026-06-07)**
 Relative strength of the stock vs its sector ETF (and the market) → LLM strategy → backtest.
@@ -164,6 +167,8 @@ Relative strength of the stock vs its sector ETF (and the market) → LLM strate
   *when*. Degrades to relative-to-market when the sector can't be classified.
 - **Verified:** 7 unit tests + a live NVDA run (→ XLK; surfaced "beating the market but lagging its
   own sector", LLM took a cautious stance).
+- **Eval:** `task7_relative/eval/` — 5 cases asserting deterministic sector mapping
+  (NVDA→XLK, JPM→XLF, XOM→XLE, QQQ→SPY fallback) + graceful fail. Baseline **5/5**.
 
 ### Task 7 — 13F institutional-holdings agent
 "Which funds are accumulating X."
