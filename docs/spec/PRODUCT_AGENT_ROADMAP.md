@@ -207,10 +207,25 @@ post-earnings-announcement drift (PEAD).
   accurate citations; honestly underperformed buy-and-hold this window, surfaced) + an eval set
   (`task8_earnings/eval/`, large-cap · foreign-fallback · graceful-fail).
 
-### Task 9 — News / sentiment agent
+### News / sentiment agent — *deferred*
 - ⚠️ **Caveat:** data is expensive, signal is commoditized, edge is hard, and time-stamped
-  point-in-time news is required to avoid lookahead. **Lowest priority of the signal set** —
-  build last, and only with a time-stamped source vetted under F-A.
+  point-in-time news is required to avoid lookahead. **Lowest priority** — build only with a
+  time-stamped source vetted under F-A. (Not yet built; would be a new task number.)
+
+### Tasks 11–13 — additional single-stock agents  ✅ **BUILT (2026-06-07)**
+Three more lookahead-safe, free-data single-name agents (same pattern: data → LLM picks from a
+DSL → deterministic backtest vs buy-and-hold + SPY):
+- **Task 11 — Fundamentals trend (XBRL).** `task11_fundamentals_trend/`, `/task11/fundamentals-trend`,
+  `/fundamentals`. Reads structured quarterly financials from SEC XBRL `companyfacts` (revenue/gross/
+  net), point-in-time (as-originally-filed, keyed off `filed`), → YoY-growth + margin-trend
+  "fundamental momentum". Complements Task 3 (text vs numbers). Live AAPL: +16.6% rev / +19.4% EPS YoY.
+- **Task 12 — Seasonality / calendar effects.** `task12_seasonality/`, `/task12/seasonality`,
+  `/seasonality`. Month-of-year / sell-in-May / turn-of-month from price history; calendar rule is
+  lookahead-free to execute, pattern is in-sample (caveated) → weak signals default to buy-and-hold.
+- **Task 13 — Overnight vs intraday (gap).** `task13_overnight/`, `/task13/overnight`, `/overnight`.
+  Decomposes overnight (close→open) vs intraday (open→close); honest about the daily round-trip cost
+  that erases the gross overnight edge. Live AAPL: overnight −3.6% vs intraday +26% ann (inverted).
+- **Verified:** 104/104 backend tests (incl. unit tests for all three); live AAPL runs; frontends build.
 
 ---
 
