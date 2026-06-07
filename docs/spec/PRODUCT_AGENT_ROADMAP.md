@@ -176,10 +176,22 @@ Relative strength of the stock vs its sector ETF (and the market) → LLM strate
   Build it, but treat as context/screening signal, not a timing signal.
 - **Reuses:** EDGAR ingest.
 
-### Task 8 — Earnings-call transcript agent
-Extract guidance / tone / surprise-vs-expectation, with grounded citations.
-- **Reuses:** the Task 2 grounded-citation + confidence/quarantine machinery.
-- Needs a transcript source (vendor or scrape — check licensing under F-C).
+### Task 8 — Earnings-release agent  ✅ **BUILT (2026-06-07)**
+Extract sentiment / guidance / beat-miss from earnings releases, with citations, and trade the
+post-earnings-announcement drift (PEAD).
+- **Free-data pivot:** SEC doesn't host call transcripts, and good transcript APIs are paid. So this
+  reads the earnings **press release** filed as **8-K Item 2.02 / Exhibit 99.1** — free, EDGAR-native,
+  timestamped, reusing the Task 2/6 SEC client. Honest that it's the prepared results + guidance, NOT
+  the live Q&A transcript; the source is pluggable so a paid transcript feed can slot in later.
+- **Implemented:** `task8_earnings/` (schemas, `pipeline/{filings,classify,backtest,autoresearch,orchestrator}.py`,
+  `api/router.py`), 2 prompts, wired at `/task8/earnings`; `/earnings` web page + nav + home card.
+  An LLM classifies each release **as-of its filing date** in one batched call (lookahead-free), an
+  LLM picks an event-driven strategy from a fixed DSL (any_earnings / bullish / bullish_or_raised /
+  beat × time_exit / next_earnings), deterministic PEAD backtest acts on the open after each filing.
+  Degrades to a flat baseline for foreign filers / no 8-Ks.
+- **Verified:** 7 unit tests + a live AAPL run (12 releases → all classified bullish/11 beats with
+  accurate citations; honestly underperformed buy-and-hold this window, surfaced) + an eval set
+  (`task8_earnings/eval/`, large-cap · foreign-fallback · graceful-fail).
 
 ### Task 9 — News / sentiment agent
 - ⚠️ **Caveat:** data is expensive, signal is commoditized, edge is hard, and time-stamped
